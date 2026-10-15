@@ -1,0 +1,9 @@
+{
+  "name": "Daily Notes",
+  "short_name": "Daily Notes",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f5f0",
+  "theme_color": "#fff7d6"
+}

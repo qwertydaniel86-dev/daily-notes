@@ -1,0 +1,510 @@
+/* Daily Notes – features: encrypted quick-edit overlay + Outbox (sync-back), Week view, Weekly review & wins, Goals,
+   Health & rest, Search, section nav and due-date pings. No personal data lives in this file; everything comes from the
+   decrypted notes, the encrypted local overlay, or the habit tracker. Helpers come from app.js (window.DN) at render time. */
+(function () {
+  'use strict';
+  const C = window.EditsCore;
+  const LS = 'dn.overlay.v1', LS_LOCKED = 'dn.overlay.v1.locked', KIND = C.OVERLAY_KIND, EXPORT_KIND = C.KIND;
+  const TZ = 'Asia/Manila';
+  const D = () => window.DN;
+  let key = null, salt = null, iter = null, O = null, raw = {}, merged = {}, missing = new Set(), saving = Promise.resolve();
+  let lockedOld = false, ticker = null, clearedNote = 0, searchIndex = [], view = null;
+
+  const rand = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, '0')).join('');
+  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const nowHM = () => new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
+  const addDays = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  const weekStart = (iso) => addDays(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7));
+  const fmtD = (iso, o) => new Date(iso + 'T12:00:00Z').toLocaleDateString('en-GB', Object.assign({ timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' }, o || {}));
+  const isoOf = (s) => { const m = /(\d{4})-(\d{2})-(\d{2})/.exec(s == null ? '' : String(s)); return m ? m[0] : null; };
+
+  /* ================= overlay (encrypted, same key as notes/habits) ================= */
+  const fresh = () => ({ v: 1, device: 'd-' + rand(3), edits: [], tomb: {}, settings: { duePings: true }, pinged: {} });
+  function normO(x) {
+    const o = Object.assign(fresh(), x && typeof x === 'object' ? x : {});
+    o.edits = Array.isArray(o.edits) ? o.edits.filter(C.validEdit) : [];
+    o.settings = Object.assign({ duePings: true }, o.settings || {});
+    o.pinged = o.pinged && typeof o.pinged === 'object' ? o.pinged : {};
+    o.tomb = o.tomb && typeof o.tomb === 'object' && !Array.isArray(o.tomb) ? o.tomb : {};
+    return o;
+  }
+  // Sync (sync.js): tell it when edits change (not for device-only things like pings/settings).
+  let syncSig = '';
+  const curSig = () => C.syncSig(O);
+  function noteChange(quiet) { const sg = curSig(); if (sg !== syncSig) { syncSig = sg; if (!quiet && window.Sync) window.Sync.changed('edits'); } }
+  // Remove edits matching pred, leaving a tombstone so other devices drop them too.
+  function drop(pred) {
+    const at = new Date().toISOString(); let n = 0;
+    O.edits = O.edits.filter((e) => { if (!pred(e)) return true; O.tomb[e.eid] = at > str(e.at) ? at : str(e.at); n++; return false; });
+    return n;
+  }
+  const str = (v) => (v == null ? '' : String(v));
+  function save(quiet) {
+    if (!key || !O) return saving;
+    noteChange(quiet);
+    const snap = JSON.parse(JSON.stringify(O)), k = key, sa = salt, it = iter;
+    saving = saving.then(async () => localStorage.setItem(LS, JSON.stringify(await NotesCrypto.encryptJSON(k, snap, sa, it, KIND))))
+      .catch((e) => { console.warn('overlay save failed', e); toast('⚠️ Could not save edits on this device'); });
+    return saving;
+  }
+  // Drop edits that notes.json now reflects (Denx synced them).
+  function prune() {
+    if (!O) return 0;
+    const n0 = O.edits.length;
+    drop((e) => C.isReflected(raw, e));
+    const n = n0 - O.edits.length;
+    if (n) { clearedNote = n; save(); }
+    return n;
+  }
+  async function unlock(k, env, notes) {
+    raw = notes && typeof notes === 'object' ? notes : {};
+    if (O && key === k && salt === env.salt) { prune(); return; }
+    key = k; salt = env.salt; iter = env.iter; O = null; lockedOld = !!localStorage.getItem(LS_LOCKED);
+    let blob = null;
+    try { blob = JSON.parse(localStorage.getItem(LS)); } catch { /* corrupt → none */ }
+    if (blob && blob.ct) {
+      try { if (blob.salt !== salt) throw new Error('salt'); O = normO(await NotesCrypto.decryptJSON(k, blob, KIND)); }
+      catch { localStorage.setItem(LS_LOCKED, JSON.stringify(blob)); lockedOld = true; } // never destroy what we can't read
+    }
+    if (!O) O = fresh();
+    syncSig = curSig();
+    prune(); save(); startTicker();
+  }
+  function lock() { key = null; O = null; merged = {}; raw = {}; searchIndex = []; stopTicker(); }
+  const ready = () => !!(O && key);
+  const pending = () => (O ? O.edits.length : 0);
+
+  function upsert(e) {
+    O.edits = O.edits.filter((x) => x.eid !== e.eid);
+    if (!C.isReflected(raw, e)) { O.edits.push(e); delete O.tomb[e.eid]; } else O.tomb[e.eid] = e.at;
+    save(); D().rerender();
+  }
+  // Item edits (tick to-do, tasking status, bill paid). Setting an item back to its notes.json state removes the edit.
+  function set({ sec, op, item, label, val }) {
+    if (!ready()) return;
+    const k = C.keyOf(sec, item);
+    upsert({ eid: `${sec}:${op}:${k}`, sec, op, key: k, label: label || C.textOf(sec, item), labelText: C.textOf(sec, item), val, at: new Date().toISOString() });
+  }
+  function undo(sec, op, item) { if (!ready()) return; const k = C.keyOf(sec, item); drop((x) => x.eid === `${sec}:${op}:${k}`); save(); D().rerender(); }
+  function add(kind, text, due) {
+    if (!ready() || !text.trim()) return false;
+    const id = 'loc-' + rand(4), sec = kind === 'todo' ? 'todo' : kind === 'reminder' ? 'reminders' : 'quick_notes';
+    const val = sec === 'quick_notes' ? { id, text: text.trim(), date: due || today() } : Object.assign({ id, item: text.trim() }, due ? { due } : {});
+    upsert({ eid: 'add:' + id, sec, op: 'add', key: 'id:' + id, label: text.trim(), val, at: new Date().toISOString() });
+    return true;
+  }
+  function logHealth(sec, date, value) {
+    if (!ready()) return;
+    const f = sec === 'health.sleep' ? 'hours' : 'kg';
+    upsert({ eid: `${sec}:log:${date}`, sec, op: 'log', key: 'd:' + date, label: `${date} ${value}`, val: { date, [f]: value }, at: new Date().toISOString() });
+  }
+  function merge(notes) {
+    raw = notes && typeof notes === 'object' ? notes : {};
+    if (!ready()) { merged = raw; return raw; }
+    prune();
+    const r = C.apply(raw, O.edits, true);
+    missing = new Set(r.missing.map((e) => e.eid));
+    merged = r.notes;
+    return merged;
+  }
+
+  /* ================= small UI bits ================= */
+  let toastEl = null;
+  function toast(msg) {
+    if (!toastEl) { toastEl = document.createElement('div'); toastEl.className = 'hb-toast'; toastEl.id = 'dn-toast'; toastEl.setAttribute('role', 'status'); document.body.append(toastEl); }
+    toastEl.textContent = msg; toastEl.classList.add('show');
+    clearTimeout(toastEl._t); toastEl._t = setTimeout(() => toastEl.classList.remove('show'), 2600);
+  }
+  const localChip = (it) => (it && typeof it === 'object' && it._local ? D().h('span', { class: 'chip local', title: 'Edited on this device – waiting for notes.json to catch up' }, '✎ this device') : null);
+  function download(name, text) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = D().h('a', { href: url, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* fallback below */ }
+    try { const ta = D().h('textarea', { class: 'sr' }); ta.value = text; document.body.append(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); return ok; } catch { return false; }
+  }
+
+  /* ================= Quick capture + Outbox ================= */
+  function captureCard() {
+    const { h, card } = D();
+    let kind = 'todo';
+    const seg = h('div', { class: 'seg qc-seg', role: 'radiogroup', 'aria-label': 'Type' });
+    const kinds = [['todo', '✅ To-do'], ['reminder', '⏰ Reminder'], ['note', '🗒️ Note']];
+    kinds.forEach(([k, l]) => seg.append(h('button', { type: 'button', role: 'radio', 'aria-checked': String(k === kind), 'data-v': k, class: k === kind ? 'on' : '',
+      onclick: (e) => { kind = k; seg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b === e.currentTarget); b.setAttribute('aria-checked', String(b === e.currentTarget)); }); } }, l)));
+    const txt = h('input', { id: 'qc-text', type: 'text', placeholder: 'Type and add…', 'aria-label': 'Quick capture text', maxlength: '300', autocomplete: 'off' });
+    const due = h('input', { id: 'qc-date', type: 'date', 'aria-label': 'Date (optional)' });
+    const form = h('form', { class: 'qc', onsubmit: (e) => {
+      e.preventDefault();
+      if (!add(kind, txt.value, due.value || '')) { txt.focus(); return; }
+      toast(kind === 'note' ? '🗒️ Note saved on this device' : `➕ ${kind === 'todo' ? 'To-do' : 'Reminder'} added – in the Outbox for Denx`);
+    } }, seg, h('div', { class: 'qc-row' }, txt, due, h('button', { type: 'submit', class: 'qc-add' }, 'Add')));
+    return card('lemon', '✍️', 'Quick capture', form, { sub: 'Saved encrypted on this device · sent to Denx via the Outbox' });
+  }
+  function exportPayload() { return { dn_edits: 1, device: O.device, exported: new Date().toISOString(), edits: O.edits.map(({ eid, sec, op, key: k, label, labelText, val, at }) => ({ eid, sec, op, key: k, label, labelText, val, at })) }; }
+  function denxText() {
+    const p = exportPayload();
+    const when = new Date(p.exported).toLocaleString('en-GB', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    return [`Daily Notes – ${p.edits.length} edit${p.edits.length === 1 ? '' : 's'} from my phone (${when} PHT). Please apply to notes.json:`,
+      ...p.edits.map((e) => '• ' + C.describe(e)), '', 'JSON (tools/apply-edits.mjs):', JSON.stringify(p)].join('\n');
+  }
+  function outboxCard() {
+    const { h, card, empty } = D();
+    const n = pending();
+    const list = n ? h('ul', { class: 'ob-list' }, O.edits.map((e) => h('li', { class: 'ob-item' + (missing.has(e.eid) ? ' miss' : '') },
+      h('span', { class: 'ob-txt' }, C.describe(e), missing.has(e.eid) ? h('span', { class: 'chip m-unver' }, 'not in notes.json any more') : null,
+        h('span', { class: 'ob-at' }, new Date(e.at).toLocaleString('en-GB', { timeZone: TZ, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }))),
+      h('button', { type: 'button', class: 'icon', 'aria-label': 'Discard edit: ' + C.describe(e), onclick: () => { drop((x) => x.eid === e.eid); save(); D().rerender(); } }, '✕')))) : empty('Nothing pending — notes.json is up to date with this device. ✨');
+    const pre = h('textarea', { class: 'ob-pre', readonly: true, rows: '6', 'aria-label': 'Text for Denx' }); pre.value = n ? denxText() : '';
+    const btns = h('div', { class: 'row-btns' },
+      h('button', { type: 'button', class: 'tiny', disabled: !n || null, onclick: async () => { const ok = await copyText(denxText()); toast(ok ? '📋 Copied – paste it to Denx' : 'Copy blocked – long-press the text below'); } }, '📋 Copy for Denx'),
+      h('button', { type: 'button', class: 'tiny ghost', disabled: !n || null, onclick: exportEnc }, '⬇️ Encrypted export'));
+    const body = [
+      clearedNote ? h('p', { class: 'ob-cleared' }, `✓ ${clearedNote} edit${clearedNote > 1 ? 's' : ''} now in notes.json – cleared`) : null,
+      list, btns,
+      n ? h('details', { class: 'm-fold ob-fold' }, h('summary', null, h('span', null, 'Show text for Denx')), pre) : null,
+      lockedOld ? h('p', { class: 'small muted' }, '🔐 Edits saved under an older passphrase are kept encrypted (not shown). ',
+        h('button', { type: 'button', class: 'tiny ghost', onclick: () => { localStorage.removeItem(LS_LOCKED); lockedOld = false; D().rerender(); } }, 'Discard them')) : null,
+      h('p', { class: 'small muted' }, 'Clears itself once Denx’s next notes.json (≈05:24 / 21:24) shows the same state. The copied text is plain – send it only in a private chat.')];
+    clearedNote = 0;
+    return card(n ? 'coral' : 'mist', '📤', 'Outbox', body, { badge: n ? `${n} pending` : null });
+  }
+  async function exportEnc() {
+    try {
+      const env = await NotesCrypto.encryptJSON(key, exportPayload(), salt, iter, EXPORT_KIND);
+      download(`daily-notes-edits-${today()}.enc.json`, JSON.stringify(env));
+      toast('⬇️ Encrypted edits downloaded – give the file to Denx');
+    } catch (e) { console.warn(e); toast('Export failed'); }
+  }
+
+  /* ================= collectors shared by Week / Review / pings ================= */
+  function datedItems(d) {
+    const { str, pick, arr, statusOf, billRows, subRows, peso, isoDate } = D();
+    const out = []; // {iso, ico, text, kind, done, key, cls, local}
+    arr(d.today ?? d.schedule).forEach((it) => { if (it && typeof it === 'object' && isoDate(it.date)) out.push({ iso: isoDate(it.date), ico: '🗓️', kind: 'event', text: [pick(it, 'time', 'when'), pick(it, 'item', 'event', 'title', 'text')].filter(Boolean).join(' '), local: it._local }); });
+    arr(d.taskings).forEach((it) => { if (typeof it !== 'object') return; const iso = isoDate(it.deadline ?? it.due); if (iso) out.push({ iso, ico: '🎖️', kind: 'tasking', text: pick(it, 'task', 'title', 'item'), done: statusOf(it.status).key === 'done', key: C.keyOf('taskings', it), local: it._local }); });
+    arr(d.todo ?? d.todos).forEach((it) => { if (typeof it !== 'object') return; const iso = isoDate(it.due ?? it.deadline); if (iso) out.push({ iso, ico: '✅', kind: 'todo', text: pick(it, 'item', 'task', 'text', 'title'), done: !!it.done, key: C.keyOf('todo', it), local: it._local }); });
+    arr(d.reminders).forEach((it) => { const o = typeof it === 'string' ? { item: it } : it; const iso = isoDate(o && (o.due ?? o.date)); if (iso) out.push({ iso, ico: '⏰', kind: 'reminder', text: pick(o, 'item', 'text', 'title'), done: !!o.done, key: C.keyOf('reminders', o), local: o._local }); });
+    billRows(d).forEach((r) => { if (r.dt && r.dt.iso) out.push({ iso: r.dt.iso, ico: '💳', kind: 'bill', text: `${pick(r.it, 'name', 'title') || 'Bill'} ${r.amount != null ? peso(r.amount) : ''}`.trim(), done: r.key === 'paid', unverified: r.key === 'unverified', key: C.keyOf('bills', r.it), local: r.it._local }); });
+    subRows(d).forEach((r) => { if ((r.key === 'active' || r.key === 'other') && r.dt && r.dt.iso) out.push({ iso: r.dt.iso, ico: '🔄', kind: 'renewal', text: `${pick(r.it, 'name') || 'Subscription'} renews${r.php != null ? ' · ' + peso(r.php) : ''}`, approx: r.dt.text.startsWith('≈') }); });
+    D().objs(d.goals, 'title').forEach((g) => { const iso = isoDate(g.target_date); if (iso) out.push({ iso, ico: '🎯', kind: 'goal', text: `Goal: ${pick(g, 'title', 'name')}`, done: (D().num(g.progress_pct) ?? 0) >= 100 }); });
+    const pft = d.health && typeof d.health === 'object' && d.health.pft && typeof d.health.pft === 'object' ? d.health.pft : null;
+    if (pft && isoDate(pft.date)) out.push({ iso: isoDate(pft.date), ico: '🏃', kind: 'pft', text: 'PFT' });
+    return out.filter((x) => x.text);
+  }
+
+  /* ================= Week view ================= */
+  function weekCard(d) {
+    const { h, card } = D();
+    const t = today(), days = Array.from({ length: 7 }, (_, i) => addDays(t, i)), end = days[6];
+    const items = datedItems(d);
+    const overdue = items.filter((x) => x.iso < t && !x.done && ['tasking', 'todo', 'reminder', 'bill'].includes(x.kind));
+    const strip = overdue.length ? h('div', { class: 'wk-over' }, h('p', { class: 'wk-over-h' }, `⚠️ Overdue (${overdue.length})`),
+      h('div', { class: 'wk-chips' }, overdue.sort((a, b) => a.iso.localeCompare(b.iso)).map((x) => h('span', { class: 'chip due-over' }, x.ico, ' ', x.text, ' · ', x.unverified ? 'verify' : `${D().daysBetween(x.iso, t)}d`)))) : null;
+    const list = h('ol', { class: 'wk-days' }, days.map((iso, i) => {
+      const its = items.filter((x) => x.iso === iso).sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0));
+      const hb = window.Habits && window.Habits.dueOn ? window.Habits.dueOn(iso) : null;
+      return h('li', { class: 'wk-day' + (i === 0 ? ' today' : '') + (new Date(iso + 'T00:00:00Z').getUTCDay() % 6 === 0 ? ' wkend' : '') },
+        h('div', { class: 'wk-dh' }, h('strong', null, i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : fmtD(iso, { day: undefined, month: undefined, weekday: 'long' })), h('span', { class: 'muted small' }, fmtD(iso, { weekday: undefined }))),
+        its.length ? h('ul', { class: 'wk-items' }, its.map((x) => h('li', { class: `wk-it k-${x.kind}${x.done ? ' done' : ''}` }, h('span', { class: 'wk-ico', 'aria-hidden': 'true' }, x.ico), h('span', null, x.text, x.approx ? h('span', { class: 'muted small' }, ' (approx)') : null), x.local ? h('span', { class: 'chip local' }, '✎') : null))) : null,
+        hb && hb.length ? h('p', { class: 'wk-hb' }, `🌸 ${hb.length} habit${hb.length > 1 ? 's' : ''}: `, hb.map((x) => x.emoji).join(' ')) : null,
+        !its.length && !(hb && hb.length) ? h('p', { class: 'wk-free muted small' }, 'Free day ✨') : null);
+    }));
+    const pings = h('label', { class: 'wk-ping small' }, h('input', { type: 'checkbox', id: 'due-pings', checked: (O && O.settings.duePings) || null, onchange: (e) => { if (O) { O.settings.duePings = e.target.checked; save(); } } }),
+      ' 🔔 Due pings while this page is open ', h('span', { class: 'muted' }, window.Habits && window.Habits.notifyOn && window.Habits.notifyOn() ? '(notifications on)' : '(turn on notifications in Habits → Manage)'));
+    return card('sky', '🗓️', 'Next 7 days', [strip, list, pings], { wide: true, badge: overdue.length ? `⚠️ ${overdue.length}` : `${fmtD(t, { weekday: undefined })} – ${fmtD(end, { weekday: undefined })}` });
+  }
+
+  /* ================= Weekly review + wins ================= */
+  const lines = (v) => D().arr(v).map((x) => (typeof x === 'string' ? x.trim() : D().pick(x, 'text', 'item', 'title'))).filter(Boolean);
+  function reviewCard(d) {
+    const { h, card, pick, arr, statusOf, billRows, objs } = D();
+    const t = today(), ws = weekStart(t), we = addDays(ws, 6), inW = (iso) => !!iso && iso >= ws && iso <= we;
+    const wr = d.weekly_review && typeof d.weekly_review === 'object' && !Array.isArray(d.weekly_review) ? d.weekly_review : null;
+    const hs = window.Habits && window.Habits.weekStats ? window.Habits.weekStats(ws) : null;
+    const doneList = [];
+    arr(d.todo ?? d.todos).forEach((it) => { if (it && typeof it === 'object' && it.done && (!isoOf(it.done_on) || inW(isoOf(it.done_on)))) doneList.push({ ico: '✅', text: pick(it, 'item', 'task', 'text', 'title'), local: it._local }); });
+    let tasks = 0;
+    arr(d.taskings).forEach((it) => { if (it && typeof it === 'object' && statusOf(it.status).key === 'done' && (!isoOf(it.done_on) || inW(isoOf(it.done_on)))) { tasks++; doneList.push({ ico: '🎖️', text: pick(it, 'task', 'title', 'item'), local: it._local }); } });
+    let paid = 0;
+    billRows(d).forEach((r) => { const po = isoOf(r.it.paid_on); if (r.key === 'paid' && (po ? inW(po) : r.dt && inW(r.dt.iso))) { paid++; doneList.push({ ico: '💳', text: `${pick(r.it, 'name') || 'Bill'} paid`, local: r.it._local }); } });
+    const mpat = Array.isArray(d.mpat_log ?? d.mpat) ? (d.mpat_log ?? d.mpat).filter((x) => x && inW(isoOf(x.date))).length : null;
+    const wins = objs(d.wins, 'text').map((w) => ({ iso: isoOf(w.date), text: pick(w, 'text', 'win', 'title') })).filter((w) => w.text);
+    const wk = wins.filter((w) => !w.iso || inW(w.iso)), older = wins.filter((w) => w.iso && w.iso < ws).sort((a, b) => b.iso.localeCompare(a.iso));
+    const tile = (v, l, cls) => h('div', { class: `m-stat ${cls || ''}` }, h('span', { class: 'm-stat-v' }, v), h('span', { class: 'm-stat-l' }, l));
+    const tiles = h('div', { class: 'm-stats rv-stats' },
+      tile(hs && hs.pct != null ? Math.round(hs.pct * 100) + '%' : '—', '🌸 Habits (week)', 'm-paid'), tile(hs ? String(hs.perfect) : '—', '💯 Perfect days', 'm-unver'),
+      mpat != null ? tile(String(mpat), '✈️ MPAT sessions', 'm-gross') : null, tile(String(tasks), '🎖️ Taskings done', 'm-unpaid'), tile(String(paid), '💳 Bills paid', 'm-paid'));
+    const sec = (title, xs) => (xs.length ? [h('p', { class: 'm-h' }, title), h('ul', { class: 'bullets' }, xs.map((x) => h('li', null, x)))] : null);
+    const body = [tiles,
+      h('p', { class: 'm-h' }, '🏆 Wins this week'),
+      wk.length || doneList.length ? h('ul', { class: 'rv-wins' }, wk.map((w) => h('li', null, '🏆 ', w.text, w.iso ? h('span', { class: 'muted small' }, ' · ' + fmtD(w.iso)) : null)),
+        doneList.map((x) => h('li', { class: 'rv-done' }, x.ico, ' ', x.text, x.local ? h('span', { class: 'chip local' }, '✎ this device') : null))) : D().empty('Log a win — small ones count. 🌱'),
+      older.length ? h('details', { class: 'm-fold' }, h('summary', null, h('span', null, `Earlier wins (${older.length})`)), h('ul', { class: 'bullets' }, older.slice(0, 20).map((w) => h('li', null, w.text, h('span', { class: 'muted small' }, ' · ' + fmtD(w.iso)))))) : null,
+      wr ? sec('✨ Highlights', lines(wr.highlights)) : null, wr ? sec('📘 Lessons', lines(wr.lessons)) : null, wr ? sec('🎯 Next focus', lines(wr.next_focus)) : null];
+    return card('lav', '🏆', 'Weekly review', body, { sub: `${wr && D().str(wr.week) ? D().str(wr.week) + ' · ' : ''}${fmtD(ws, { weekday: undefined })} – ${fmtD(we, { weekday: undefined })}` });
+  }
+
+  /* ================= Goals ================= */
+  const AREA_COLORS = ['sky', 'mint', 'lav', 'peach', 'rose', 'lemon', 'aqua', 'lilac', 'coral'];
+  function goalsCard(d) {
+    const { h, card, pick, num, objs, dueInfo, empty, hid } = D();
+    const gs = objs(d.goals, 'title');
+    if (!gs.length) return card('peach', '🎯', 'Goals', empty('No goals yet — add one in notes.json (see README).'));
+    const list = h('div', { class: 'gl-list' }, gs.map((g) => {
+      const ms = objs(g.milestones, 'text');
+      const msDone = ms.filter((m) => m.done).length;
+      let pct = num(g.progress_pct);
+      const auto = pct == null && ms.length;
+      if (auto) pct = Math.round((msDone / ms.length) * 100);
+      pct = pct == null ? null : Math.max(0, Math.min(100, pct));
+      const area = pick(g, 'area', 'category');
+      const di = dueInfo(g.target_date, pct === 100);
+      return h('div', { class: 'gl' },
+        h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, pick(g, 'title', 'name') || '(goal)'), area ? h('span', { class: `chip area c-${AREA_COLORS[parseInt(hid(area.toLowerCase()), 36) % AREA_COLORS.length]}` }, area) : null),
+        h('div', { class: 'meter' }, h('div', { class: `bar${pct == null ? ' unknown' : ''}`, role: 'progressbar', 'aria-label': pick(g, 'title'), 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct ?? 0 }, h('span', { style: { width: (pct ?? 0) + '%' } })),
+          h('div', { class: 'meter-foot small muted' }, pct == null ? 'progress not set' : `${pct}%${auto ? ` · ${msDone}/${ms.length} milestones` : ''}`, di ? h('span', { class: `chip ${di.cls}` }, '🏁 ', di.label) : null)),
+        pick(g, 'next_step', 'next') ? h('p', { class: 'gl-next' }, '👉 ', pick(g, 'next_step', 'next')) : null,
+        ms.length ? h('details', { class: 'm-fold gl-ms' }, h('summary', null, h('span', null, `Milestones ${msDone}/${ms.length}`)),
+          h('ul', { class: 'gl-mlist' }, ms.map((m) => h('li', { class: m.done ? 'done' : '' }, m.done ? '✅ ' : '⬜ ', pick(m, 'text', 'title', 'item'))))) : null);
+    }));
+    return card('peach', '🎯', 'Goals', list, { badge: gs.length });
+  }
+
+  /* ================= Health & rest ================= */
+  const SVG = 'http://www.w3.org/2000/svg';
+  function svgEl(tag, attrs) { const n = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v); return n; }
+  function spark(points, { ref, fmt, label, color }) {
+    const W = 300, H = 64, P = 6;
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'spark', role: 'img', 'aria-label': label });
+    if (points.length < 2) { const tx = svgEl('text', { x: W / 2, y: H / 2 + 4, 'text-anchor': 'middle', class: 'spark-empty' }); tx.textContent = points.length ? 'one entry so far' : 'no data yet'; svg.append(tx); return svg; }
+    const vs = points.map((p) => p.v).concat(ref != null ? [ref] : []);
+    let lo = Math.min(...vs), hi = Math.max(...vs); if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+    const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+    const t0 = Date.parse(points[0].iso), t1 = Date.parse(points[points.length - 1].iso) || t0 + 1;
+    const X = (iso) => P + ((Date.parse(iso) - t0) / Math.max(1, t1 - t0)) * (W - 2 * P), Y = (v) => H - P - ((v - lo) / (hi - lo)) * (H - 2 * P);
+    if (ref != null) svg.append(svgEl('line', { x1: P, x2: W - P, y1: Y(ref), y2: Y(ref), class: 'spark-ref' }));
+    const pts = points.map((p) => `${X(p.iso).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
+    svg.append(svgEl('polyline', { points: `${P},${H - P} ${pts} ${W - P},${H - P}`, class: 'spark-area', fill: color, 'fill-opacity': '0.15', stroke: 'none' }));
+    svg.append(svgEl('polyline', { points: pts, class: 'spark-line', stroke: color, fill: 'none' }));
+    points.forEach((p, i) => { const c = svgEl('circle', { cx: X(p.iso).toFixed(1), cy: Y(p.v).toFixed(1), r: i === points.length - 1 ? 3.5 : 2.2, fill: p.local ? '#e85584' : color }); const tt = svgEl('title'); tt.textContent = `${p.iso}: ${fmt(p.v)}`; c.append(tt); svg.append(c); });
+    return svg;
+  }
+  function healthCard(d) {
+    const { h, card, num, objs, pick, dueInfo, fmtNum } = D();
+    const hh = d.health && typeof d.health === 'object' && !Array.isArray(d.health) ? d.health : {};
+    const t = today();
+    const series = (xs, f) => objs(xs, 'date').map((x) => ({ iso: isoOf(x.date), v: num(x[f]), local: !!x._local })).filter((p) => p.iso && p.v != null && p.iso <= t).sort((a, b) => a.iso.localeCompare(b.iso));
+    const sleep = series(hh.sleep, 'hours'), weight = series(hh.weight, 'kg');
+    const s7 = sleep.filter((p) => p.iso >= addDays(t, -6));
+    const avg = s7.length ? s7.reduce((a, p) => a + p.v, 0) / s7.length : null;
+    const lastS = sleep[sleep.length - 1], lastW = weight[weight.length - 1];
+    const w30 = weight.filter((p) => p.iso <= addDays(t, -25)).pop() || weight[0];
+    const dW = lastW && w30 && w30 !== lastW ? lastW.v - w30.v : null;
+    const tile = (v, l, cls) => h('div', { class: `m-stat ${cls}` }, h('span', { class: 'm-stat-v' }, v), h('span', { class: 'm-stat-l' }, l));
+    const tiles = h('div', { class: 'm-stats' },
+      tile(avg != null ? `${fmtNum(Math.round(avg * 10) / 10)} h` : '—', `😴 Sleep avg 7d${s7.length ? ` (${s7.length} night${s7.length === 1 ? '' : 's'})` : ''}`, avg != null && avg < 6 ? 'm-over' : avg != null && avg < 7 ? 'm-unpaid' : 'm-paid'),
+      tile(lastW ? `${fmtNum(lastW.v)} kg` : '—', `⚖️ Weight${dW != null ? ` · ${dW > 0 ? '+' : ''}${fmtNum(Math.round(dW * 10) / 10)} kg since ${fmtD(w30.iso, { weekday: undefined })}` : ''}`, 'm-gross'));
+    const chart = (title, pts, opts) => h('div', { class: 'hl-chart' }, h('p', { class: 'hl-ch' }, h('span', null, title), pts.length ? h('span', { class: 'muted small' }, `last ${opts.unit}: ${fmtNum(pts[pts.length - 1].v)} · ${fmtD(pts[pts.length - 1].iso, { weekday: undefined })}`) : null), spark(pts, opts));
+    const pft = hh.pft && typeof hh.pft === 'object' ? hh.pft : null;
+    const pftDi = pft ? dueInfo(pft.date, false) : null;
+    const pftEl = pft ? h('div', { class: 'hl-pft' }, h('p', { class: 'm-h' }, '🏃 PFT ', pftDi ? h('span', { class: `chip ${pftDi.cls}` }, pftDi.label) : null),
+      objs(pft.events, 'name').length ? h('table', { class: 'hl-tbl' }, h('thead', null, h('tr', null, h('th', null, 'Event'), h('th', null, 'Target'), h('th', null, 'Latest'))),
+        h('tbody', null, objs(pft.events, 'name').map((e) => h('tr', null, h('td', null, pick(e, 'name', 'event')), h('td', null, pick(e, 'target', 'goal') || '—'), h('td', null, pick(e, 'latest', 'last', 'current') || '—'))))) : null) : null;
+    // quick log (overlay)
+    const dIn = h('input', { type: 'date', id: 'hl-date', value: t, max: t, 'aria-label': 'Date' });
+    const sIn = h('input', { type: 'number', id: 'hl-sleep', inputmode: 'decimal', step: '0.25', min: '0', max: '16', placeholder: 'Sleep h', 'aria-label': 'Sleep hours' });
+    const wIn = h('input', { type: 'number', id: 'hl-weight', inputmode: 'decimal', step: '0.1', min: '20', max: '300', placeholder: 'Weight kg', 'aria-label': 'Weight kg' });
+    const form = h('form', { class: 'hl-log', onsubmit: (e) => {
+      e.preventDefault();
+      const date = dIn.value || t, s = num(sIn.value), w = num(wIn.value);
+      if (s == null && w == null) { toast('Enter sleep hours and/or weight'); return; }
+      if (s != null && (s < 0 || s > 16)) { toast('Sleep hours look off (0–16)'); return; }
+      if (w != null && (w < 20 || w > 300)) { toast('Weight looks off (20–300 kg)'); return; }
+      if (s != null) logHealth('health.sleep', date, s); if (w != null) logHealth('health.weight', date, w);
+      toast('📝 Logged on this device – in the Outbox for Denx');
+    } }, h('p', { class: 'm-h' }, '📝 Quick log'), h('div', { class: 'hl-row' }, dIn, sIn, wIn, h('button', { type: 'submit', class: 'qc-add' }, 'Log')));
+    return card('aqua', '💪', 'Health & rest', [tiles,
+      chart('😴 Sleep (hours)', sleep.slice(-14), { ref: 7, fmt: (v) => v + ' h', label: 'Sleep hours, last entries', color: '#5b6fd6', unit: 'night' }),
+      chart('⚖️ Weight (kg)', weight.slice(-20), { fmt: (v) => v + ' kg', label: 'Weight trend', color: '#17a28f', unit: 'entry' }),
+      pftEl, pick(hh, 'notes', 'note') ? h('p', { class: 'm-note' }, '📝 ', pick(hh, 'notes', 'note')) : null, form,
+      h('p', { class: 'small muted' }, 'Pink dots = logged on this device (pending sync). Dashed line = 7 h.')]);
+  }
+
+  /* ================= Quick notes (notes.json `quick_notes` + local) ================= */
+  function quickNotesCard(d) {
+    const { h, card, objs, pick } = D();
+    const xs = objs(d.quick_notes, 'text').filter((x) => pick(x, 'text', 'note', 'item'));
+    if (!xs.length) return null;
+    return card('lilac', '🗒️', 'Quick notes', h('ul', { class: 'bullets' }, xs.slice().reverse().map((x) => h('li', null, pick(x, 'text', 'note', 'item'), isoOf(x.date) ? h('span', { class: 'muted small' }, ' · ' + fmtD(isoOf(x.date))) : null, localChip(x)))), { badge: xs.length });
+  }
+
+  /* ================= Search ================= */
+  const KEY_CARD = { today: 'c-schedule', schedule: 'c-schedule', todo: 'c-todo', todos: 'c-todo', taskings: 'c-taskings', tasks: 'c-taskings', reminders: 'c-reminders', duty_log: 'c-duty', duty: 'c-duty',
+    wd1: 'c-wd1', studies: 'c-studies', mmpa: 'c-studies', mpat_log: 'c-mpat', mpat: 'c-mpat', ideas: 'c-ideas', verse: 'c-hero', bills: 'm-bills', bills_outlook: 'm-bills', bills_summary: 'm-bills',
+    subscriptions: 'm-subscriptions', decisions: 'm-decisions', automations: 'm-automations', finance_tips: 'm-finance_tips', income: 'm-pay', debts: 'm-debts', balances: 'm-freecash',
+    wins: 'c-review', weekly_review: 'c-review', goals: 'c-goals', health: 'c-health', quick_notes: 'c-quick_notes' };
+  const SKIP = new Set(['updated', 'version', 'schema', 'habits']);
+  function buildIndex(d) {
+    const idTok = D().idTok, out = [];
+    const leaves = (v, acc) => {
+      if (v == null) return acc;
+      if (typeof v === 'string' || typeof v === 'number') { const s = String(v).trim(); if (s) acc.push(s); return acc; }
+      if (Array.isArray(v)) { v.forEach((x) => leaves(x, acc)); return acc; }
+      if (typeof v === 'object') for (const [k, x] of Object.entries(v)) if (!k.startsWith('_') && !idTok(k) && k !== 'id') leaves(x, acc);
+      return acc;
+    };
+    for (const [k, v] of Object.entries(d || {})) {
+      if (SKIP.has(k) || idTok(k) || k.startsWith('_')) continue;
+      const cardId = KEY_CARD[k] || 'x-' + k;
+      const items = Array.isArray(v) ? v : v && typeof v === 'object' && !['wd1', 'verse', 'bills_summary'].includes(k) ? Object.values(v) : [v];
+      const safeItems = k === 'income' ? [] : items; // pay slip lines: searchable by name only (below)
+      safeItems.forEach((it) => { const t = leaves(it, []).join(' · '); if (t) out.push({ k, cardId, text: t, local: !!(it && it._local) }); });
+      if (k === 'income' && v && typeof v === 'object') ['allowances', 'deductions', 'salary_loans'].forEach((f) => D().objs(v[f], 'name').forEach((x) => out.push({ k, cardId, text: D().pick(x, 'name') })));
+    }
+    (window.Habits && window.Habits.names ? window.Habits.names() : []).forEach((x) => out.push({ k: 'habits', cardId: 'habits', text: `${x.emoji} ${x.name}` }));
+    searchIndex = out;
+  }
+  const LABEL = { today: 'Schedule', todo: 'To-do', taskings: 'Taskings', reminders: 'Reminders', duty_log: 'Duty log', wd1: 'WD1', studies: 'Studies', mpat_log: 'MPAT', ideas: 'Ideas', verse: 'Verse',
+    bills: 'Bills', bills_outlook: 'Bills', subscriptions: 'Subscriptions', decisions: 'Decisions', automations: 'Automations', finance_tips: 'Strategy', income: 'Pay', debts: 'Debts', balances: 'Cash',
+    wins: 'Wins', weekly_review: 'Review', goals: 'Goals', health: 'Health', quick_notes: 'Quick notes', habits: 'Habits' };
+  function marked(text, terms) {
+    const { h } = D(), frag = document.createDocumentFragment();
+    if (!terms.length) { frag.append(text); return frag; }
+    const re = new RegExp('(' + terms.map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+    text.split(re).forEach((part, i) => frag.append(i % 2 ? h('mark', null, part) : part));
+    return frag;
+  }
+  function snippet(text, terms) {
+    if (text.length <= 140) return text;
+    const i = Math.max(0, text.toLowerCase().indexOf(terms[0] || '') - 40);
+    return (i > 0 ? '…' : '') + text.slice(i, i + 140) + (i + 140 < text.length ? '…' : '');
+  }
+  let lastQuery = '';
+  function searchCard() {
+    const { h, card } = D();
+    const res = h('ul', { class: 'sr-list', id: 'sr-list', 'aria-live': 'polite' });
+    const inp = h('input', { type: 'search', id: 'sr-q', placeholder: 'Search notes, money, habits…', 'aria-label': 'Search', autocomplete: 'off', value: lastQuery,
+      oninput: (e) => { lastQuery = e.target.value; runSearch(res, lastQuery); } });
+    setTimeout(() => runSearch(res, lastQuery), 0);
+    return card('mist', '🔍', 'Search', [inp, res], { wide: true, sub: 'Everything on this device: notes, edits not yet synced, habit names' });
+  }
+  function runSearch(res, q) {
+    const { h } = D();
+    const terms = q.toLowerCase().split(/\s+/).filter((x) => x.length >= 2);
+    if (!terms.length) { res.replaceChildren(h('li', { class: 'empty' }, 'Type at least 2 letters.')); return; }
+    const hits = searchIndex.filter((x) => { const t = x.text.toLowerCase(); return terms.every((w) => t.includes(w)); }).slice(0, 40);
+    res.replaceChildren(...(hits.length ? hits.map((x) => h('li', null, h('button', { type: 'button', class: 'sr-hit', onclick: () => jumpTo(x.cardId, terms) },
+      h('span', { class: 'chip sr-sec' }, LABEL[x.k] || x.k.replace(/_/g, ' ')), x.local ? h('span', { class: 'chip local' }, '✎') : null, h('span', { class: 'sr-txt' }, marked(snippet(x.text, terms), terms))))) : [h('li', { class: 'empty' }, `No matches for “${q}”.`)]));
+  }
+  function jumpTo(cardId, terms) {
+    const el = document.getElementById(cardId);
+    if (!el) { toast('That section is not on the board'); return; }
+    go(el.dataset.sec || 'today');
+    el.querySelectorAll('details').forEach((x) => { if (terms.some((w) => x.textContent.toLowerCase().includes(w))) x.open = true; });
+    highlightIn(el, terms);
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  }
+  function highlightIn(el, terms) {
+    if (!(window.CSS && CSS.highlights && window.Highlight)) return;
+    const ranges = [], walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const t = n.data.toLowerCase();
+      for (const w of terms) { let i = t.indexOf(w); while (i >= 0) { const r = new Range(); r.setStart(n, i); r.setEnd(n, i + w.length); ranges.push(r); i = t.indexOf(w, i + w.length); } }
+    }
+    CSS.highlights.set('dn-search', new Highlight(...ranges));
+    clearTimeout(highlightIn._t); highlightIn._t = setTimeout(() => CSS.highlights.delete('dn-search'), 8000);
+  }
+
+  /* ================= section nav ================= */
+  const SECTIONS = [['today', '🏠', 'Today'], ['week', '🗓️', 'Week'], ['money', '💰', 'Money'], ['goals', '🎯', 'Goals'], ['health', '💪', 'Health'], ['search', '🔍', 'Search']];
+  function navEl() {
+    const nav = document.getElementById('secnav');
+    if (!nav) return null;
+    if (!nav.childElementCount) nav.append(...SECTIONS.map(([k, ico, l]) => D().h('button', { type: 'button', 'data-sec': k, class: 'sn-btn', onclick: () => { go(k); window.scrollTo({ top: 0 }); if (k === 'search') setTimeout(() => { const q = document.getElementById('sr-q'); if (q) q.focus(); }, 50); } },
+      h2(ico), D().h('span', { class: 'sn-l' }, l), D().h('span', { class: 'sn-dot', hidden: true }))));
+    nav.hidden = false;
+    return nav;
+  }
+  const h2 = (ico) => D().h('span', { class: 'sn-i', 'aria-hidden': 'true' }, ico);
+  function go(sec) {
+    if (!SECTIONS.some((s) => s[0] === sec)) sec = 'today';
+    view = sec;
+    try { history.replaceState(null, '', sec === 'today' ? location.pathname + location.search : '#' + sec); } catch { /* file:// etc */ }
+    const board = document.getElementById('board');
+    if (board) {
+      const old = document.getElementById('c-empty-sec'); if (old) old.remove();
+      board.dataset.view = sec;
+      let shown = 0;
+      for (const el of board.children) { el.hidden = (el.dataset.sec || 'today') !== sec; if (!el.hidden) shown++; }
+      if (!shown) { const ph = D().card('mist', '🌿', 'Nothing here yet', D().empty('No data for this section in notes.json yet – see README “For Denx”.')); ph.id = 'c-empty-sec'; ph.dataset.sec = sec; board.append(ph); }
+    }
+    const nav = document.getElementById('secnav');
+    if (nav) nav.querySelectorAll('.sn-btn').forEach((b) => { const on = b.dataset.sec === sec; b.classList.toggle('on', on); b.setAttribute('aria-current', on ? 'page' : 'false'); });
+  }
+  function afterRender(d) {
+    buildIndex(d);
+    const nav = navEl();
+    if (nav) {
+      const over = datedItems(d).filter((x) => x.iso < today() && !x.done && ['tasking', 'todo', 'reminder', 'bill'].includes(x.kind)).length;
+      const dot = (k, on, txt) => { const b = nav.querySelector(`[data-sec="${k}"] .sn-dot`); if (b) { b.hidden = !on; b.textContent = txt || ''; } };
+      dot('week', over > 0, String(over)); dot('today', pending() > 0, String(pending()));
+    }
+    go(view || (location.hash || '').slice(1) || 'today');
+  }
+  // Slots for app.js: where each feature card goes on the board.
+  function cards(d) {
+    const safe = (fn, id) => { try { const el = fn(d); if (el) el.id = id; return el; } catch (e) { console.error(e); return null; } };
+    return {
+      todayTop: [safe(captureCard, 'c-capture'), ready() && (pending() || lockedOld || clearedNote) ? safe(outboxCard, 'c-outbox') : null],
+      todayMid: [safe(quickNotesCard, 'c-quick_notes')],
+      week: [safe(weekCard, 'c-week'), safe(reviewCard, 'c-review')],
+      goals: [d.goals != null ? safe(goalsCard, 'c-goals') : null],
+      health: [safe(healthCard, 'c-health')],
+      search: [safe(searchCard, 'c-search')],
+    };
+  }
+
+  /* ================= due pings (only while the page is open) ================= */
+  function tickPings() {
+    if (!ready() || !O.settings.duePings || !window.Habits || !window.Habits.notifyOn || !window.Habits.notifyOn()) return;
+    const hm = nowHM(); if (hm < '07:00' || hm >= '22:00') return; // quiet hours
+    const t = today(), sent = (O.pinged[t] = O.pinged[t] || []);
+    for (const k of Object.keys(O.pinged)) if (k !== t) delete O.pinged[k];
+    const discreet = window.Habits.discreet();
+    let changed = false;
+    for (const x of datedItems(merged)) {
+      if (x.done || !['bill', 'tasking', 'todo', 'reminder'].includes(x.kind)) continue;
+      const dd = D().daysBetween(t, x.iso);
+      const when = dd === 0 ? 'today' : dd === 1 ? 'tomorrow' : dd === 3 && x.kind === 'bill' ? 'in 3 days' : null;
+      if (!when) continue;
+      const tag = `${x.kind}:${x.key || D().hid(x.text)}:${when}`;
+      if (sent.includes(tag)) continue;
+      sent.push(tag); changed = true;
+      const noun = { bill: 'A bill', tasking: 'A tasking', todo: 'A to-do', reminder: 'A reminder' }[x.kind];
+      window.Habits.notify(discreet ? '⏰ Due soon' : `${x.ico} Due ${when}`, discreet ? `${noun} is due ${when}.` : `${x.text} — due ${when}.`, 'due-' + tag);
+    }
+    if (changed) save();
+  }
+  function startTicker() { stopTicker(); ticker = setInterval(tickPings, 60000); setTimeout(tickPings, 2500); }
+  function stopTicker() { clearInterval(ticker); ticker = null; }
+
+  /* ================= sync hooks (sync.js) ================= */
+  const syncFields = ({ eid, sec, op, key: k, label, labelText, val, at }) => ({ eid, sec, op, key: k, label, labelText, val, at });
+  function syncPayload() { return ready() ? { device: O.device, edits: O.edits.map(syncFields), tomb: Object.assign({}, O.tomb) } : null; }
+  // Adopt a merged state from the sync server. Quiet: does not re-trigger a sync. Returns true when the board changed.
+  function syncApply(m) {
+    if (!ready() || !m) return false;
+    const before = curSig();
+    O.edits = (m.edits || []).filter(C.validEdit).map(syncFields);
+    O.tomb = Object.assign({}, m.tomb || {});
+    drop((e) => C.isReflected(raw, e));
+    const changed = curSig() !== before;
+    save(true);
+    if (changed) D().rerender();
+    return changed;
+  }
+  window.Features = { syncPayload, syncApply, unlock, lock, ready, merge, cards, afterRender, set, undo, add, logHealth, localChip, pending, go, _flush: () => saving, _tick: tickPings };
+})();

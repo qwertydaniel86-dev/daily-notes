@@ -1,0 +1,11 @@
+# Only the static app + ENCRYPTED notes.enc.json are published. Never commit plaintext or secrets.
+notes.json
+*.plain.json
+.pass
+.salt.json
+.last-publish
+pending-edits.json
+*.bak
+*.tmp
+*.png
+.DS_Store

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' https://script.google.com https://script.googleusercontent.com; worker-src 'self'; manifest-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#fff7d6">
+<title>Daily Notes</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:,">
+<link rel="manifest" href="manifest.webmanifest">
+</head>
+<body>
+<main id="gate" class="gate" hidden>
+  <form id="login" class="gate-card" autocomplete="off">
+    <div class="gate-emoji" aria-hidden="true">🔒📝</div>
+    <h1>Daily Notes</h1>
+    <p class="muted">Private. Enter your passphrase to unlock.</p>
+    <label class="sr" for="pass">Passphrase</label>
+    <input id="pass" name="pass" type="password" placeholder="Passphrase" autocomplete="current-password" required autofocus>
+    <label class="remember"><input id="remember" type="checkbox"> Remember on this device</label>
+    <button id="unlock" type="submit">Unlock</button>
+    <p id="gate-msg" class="gate-msg" role="alert" aria-live="polite"></p>
+  </form>
+</main>
+
+<div id="app" hidden>
+  <header class="topbar">
+    <span class="brand">✦ Daily Notes</span>
+    <span class="top-actions">
+      <span id="updated" class="muted small"></span>
+      <button id="sync-chip" class="ghost sync-chip" type="button" hidden>☁️</button>
+      <button id="refresh" class="ghost" type="button" title="Refresh">🔄</button>
+      <button id="lock" class="ghost" type="button" title="Lock &amp; forget this device">🔒 Lock</button>
+    </span>
+  </header>
+  <nav id="secnav" class="secnav" aria-label="Sections" hidden></nav>
+  <section id="board" class="board" aria-live="polite"></section>
+  <footer class="foot muted small">Encrypted at rest · decrypted only in this browser</footer>
+</div>
+<noscript><p class="gate-msg">JavaScript is required to unlock these notes.</p></noscript>
+<script src="config.js"></script>
+<script src="crypto.js"></script>
+<script src="habits.js"></script>
+<script src="edits-core.js"></script>
+<script src="features.js"></script>
+<script src="sync.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
