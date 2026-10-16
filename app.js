@@ -73,6 +73,8 @@
   function ticks() { try { return JSON.parse(localStorage.getItem(LS_TICKS)) || {}; } catch { return {}; } }
   function setTick(id, v) { const t = ticks(); if (v) t[id] = 1; else delete t[id]; localStorage.setItem(LS_TICKS, JSON.stringify(t)); }
 
+  // Payment methods show the account NAME only: any run of 3+ digits (card / account digits) is masked.
+  const maskNum = (s) => str(s).replace(/\d[\d\s-]{1,}\d/g, (m) => (m.replace(/\D/g, '').length >= 3 ? '••••' : m)).replace(/\s*••••(\s*••••)*/g, ' ••••').trim();
   /* ---------- card builders ---------- */
   function card(color, icon, title, body, opts) {
     opts = opts || {};
@@ -122,7 +124,7 @@
       const li = h('li', { class: checked ? 'done' : '' });
       const cb = h('input', { type: 'checkbox', id: `${prefix}-${i}`, checked: checked || null, disabled: dataDone || null,
         title: dataDone ? 'Marked done in notes' : 'Tick on this device',
-        onchange: (e) => { setTick(id, e.target.checked); li.classList.toggle('done', e.target.checked); if (prefix === 'study') updateStudyBar(); } });
+        onchange: (e) => { setTick(id, e.target.checked); li.classList.toggle('done', e.target.checked); } });
       li.append(cb, h('label', { for: `${prefix}-${i}` }, label, extraFn ? extraFn(it) : null));
       return li;
     }));
@@ -218,35 +220,9 @@
           h('span', { class: 'small' }, cur == null ? h('span', { class: 'muted' }, `not set / ${fmtNum(req)}${unit ? ' ' + unit : ''}`) : `${fmtNum(cur)} / ${fmtNum(req)}${unit ? ' ' + unit : ''}`)),
         h('div', { class: `bar${pct == null ? ' unknown' : ''}`, role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct ?? 0, 'aria-label': label },
           h('span', { style: { width: `${pct ?? 0}%` } })),
-        h('div', { class: 'meter-foot small muted' }, pct == null ? 'Add current value to track' : pct >= 100 ? '🎉 Requirement met' : `${pct}% · ${fmtNum(togo)}${unit ? ' ' + unit : ''} to go`));
+        h('div', { class: 'meter-foot small muted' }, pct == null ? 'not set yet · update on 🏠 Today → Update progress' : pct >= 100 ? '🎉 Requirement met' : `${pct}% · ${fmtNum(togo)}${unit ? ' ' + unit : ''} to go`));
     });
     return card('rose', '🎯', 'WD1 upgrade tracker', rows, { badge: cnt ? `${Math.round(tot / cnt)}% avg` : null });
-  }
-
-  let studyBarEl = null, studyCountEl = null, studyTotal = 0;
-  function updateStudyBar() {
-    if (!studyBarEl) return;
-    const n = document.querySelectorAll('#study-list li.done').length;
-    const pct = studyTotal ? Math.round((n / studyTotal) * 100) : 0;
-    studyBarEl.style.width = pct + '%';
-    studyCountEl.textContent = `${n} / ${studyTotal} reviewed · ${pct}%`;
-  }
-  function studiesCard(d) {
-    const raw = d.studies ?? d.mmpa;
-    const items = arr(Array.isArray(raw) ? raw : raw && Array.isArray(raw.subjects) ? raw.subjects : raw);
-    const lbl = (it) => (typeof it === 'string' ? it : [pick(it, 'code', 'name', 'subject'), pick(it, 'title')].filter(Boolean).join(' – ') || '(subject)');
-    if (!items.length) { studyBarEl = null; return card('lemon', '📚', 'MMPA study checklist', empty('No subjects listed yet.')); }
-    studyTotal = items.length;
-    studyBarEl = h('span', { style: { width: '0%' } });
-    studyCountEl = h('span', { class: 'small muted' });
-    const list = checklist('study', items, lbl, (it) => typeof it === 'object' && !!it.done);
-    list.id = 'study-list';
-    const exam = raw && typeof raw === 'object' && !Array.isArray(raw) ? pick(raw, 'exam_date', 'exam') : str(d.mmpa_exam_date);
-    const examDi = exam ? dueInfo(exam, false) : null;
-    return card('lemon', '📚', 'MMPA study checklist', [
-      h('div', { class: 'meter' }, h('div', { class: 'bar', role: 'progressbar', 'aria-label': 'Studies reviewed' }, studyBarEl), studyCountEl),
-      examDi ? h('p', null, h('span', { class: `chip ${examDi.cls}` }, '🗓️ Exam: ', examDi.label)) : null,
-      list], { sub: 'Comprehensive exam · tick each subject once reviewed' });
   }
 
   function mpatCard(d) {
@@ -423,7 +399,7 @@
           h('span', { class: 'm-amt' }, price, eq ? h('span', { class: 'm-eq' }, eq) : null)),
         h('div', { class: 'm-meta' }, st ? h('span', { class: `chip ${st[2]}` }, st[0], ' ', st[1]) : neutralChip(r.raw),
           r.dt ? h('span', { class: `chip ${r.dt.cls === 'due-over' ? 'due-text' : r.dt.cls}` }, '🔄 ', r.dt.text) : null,
-          pick(r.it, 'method', 'card', 'payment') ? h('span', { class: 'chip' }, '💳 ', pick(r.it, 'method', 'card', 'payment')) : null),
+          pick(r.it, 'method', 'card', 'payment') ? h('span', { class: 'chip' }, '💳 ', maskNum(pick(r.it, 'method', 'card', 'payment'))) : null),
         pick(r.it, 'note', 'notes') ? h('p', { class: 'm-note' }, '📝 ', pick(r.it, 'note', 'notes')) : null);
     })) : empty('No subscriptions listed.');
     return card('sky', '🔁', 'Subscriptions', [total, uncounted ? h('p', { class: 'small muted' }, `${uncounted} not counted (no ₱ amount or unknown cycle)`) : null, list],
@@ -595,6 +571,15 @@
           ['−', `Subscriptions renewing (${ps.length})`, sSum, ps.map((r) => `${pick(r.it, 'name') || 'sub'} ${fmtDate(r.dt.iso)}`)],
           cash.length ? ['+', 'Cash on hand', cashSum, cash.map((x) => x.name)] : null], free, 'Free cash this period'));
       if (before.length) notes.push(`${peso(sumOf(before))} in ${before.length} not-paid bill${before.length > 1 ? 's' : ''} due before this period (overdue/unverified) not included.`);
+      // real logged spending since payday (💸 Log money) vs the plan above
+      const P = window.Progress && window.Progress.loggedBetween ? window.Progress.loggedBetween(d, start, end) : null;
+      if (P && P.n) {
+        const left = free - P.out + P.extraIn; // bills paid from the log drop out of "Bills due" above, so they are counted here once
+        blocks.push(h('p', { class: 'm-h' }, `📒 Logged since payday (${P.n} entr${P.n === 1 ? 'y' : 'ies'})`),
+          ledger([['+', 'Free cash (plan above)', free], ['−', `Logged spending${P.billOut ? ` (incl. ${peso(P.billOut)} bills paid)` : ''}`, P.out],
+            P.extraIn ? ['+', 'Extra money in (not salary)', P.extraIn] : null], left, 'Left after logged spending'));
+        notes.push('Logged spending uses your 💸 money log since payday; cash on hand may already include some of it.');
+      }
       if (lapsed.length) notes.push(`“Maybe lapsed” subscriptions not counted (${peso(lapsed.reduce((a, r) => a + r.php, 0))} if they still bill).`);
     } else notes.push(M ? 'Add income.paydays to see the pay-period view.' : 'Add income (monthly_net, paydays) to see free cash.');
     // monthly view
@@ -669,7 +654,7 @@
 
   const KNOWN = new Set(['updated', 'verse', 'today', 'schedule', 'todo', 'todos', 'taskings', 'tasks', 'duty_log', 'duty', 'wd1', 'studies', 'mmpa', 'mmpa_exam_date', 'mpat_log', 'mpat', 'ideas', 'reminders', 'habits', 'version', 'schema',
     'bills', 'bills_summary', 'bills_outlook', 'subscriptions', 'decisions', 'automations', 'finance_tips', 'income', 'balances', 'debts',
-    'wins', 'weekly_review', 'goals', 'health', 'quick_notes', 'links']);
+    'wins', 'weekly_review', 'goals', 'health', 'quick_notes', 'links', 'finance', 'va', 'transactions']);
   function extraCards(d) {
     // Unknown top-level sections are shown generically so nothing the writer adds is silently lost.
     // Id-like keys are hidden here too (token match, so words like "ideas"/"video" are not caught): tin, gsis, pag-ibig, philhealth, id, account, number.
@@ -696,18 +681,18 @@
     const tag = (sec, id) => (el) => { if (el) { if (id && !el.id) el.id = id; el.dataset.sec = sec; } return el; };
     const money = (list, secOf) => list.map(([k, fn]) => { let c; try { c = fn(d); c.id = 'm-' + k; } catch (e) { console.error(e); c = card('mist', '⚠️', k.replace(/_/g, ' '), empty('Could not render this section.')); }
       c.dataset.sec = secOf ? secOf(k) : 'money'; return c; });
-    const fx = F ? F.cards(d) : { todayTop: [], todayMid: [], week: [], goals: [], health: [], links: [], search: [] };
+    const fx = F ? F.cards(d) : { todayTop: [], todayMid: [], todayEnd: [], week: [], health: [], links: [], search: [] };
+    const px = window.Progress ? window.Progress.cards(d) : { todayProgress: [], money: [], goals: [] };
     const habitsCard = window.Habits ? window.Habits.el() : null;
     const T = (fn, id) => tag('today', id)(safe(fn)), G = (fn, id) => tag('goals', id)(safe(fn));
     board.replaceChildren(...[
       T(headerCard, 'c-hero'), ...fx.todayTop.map(tag('today')), tag('today')(habitsCard), T(scheduleCard, 'c-schedule'), T(todoCard, 'c-todo'), T(remindersCard, 'c-reminders'),
-      T(taskingsCard, 'c-taskings'), ...fx.todayMid.map(tag('today')), T(dutyCard, 'c-duty'), T(ideasCard, 'c-ideas'),
+      T(taskingsCard, 'c-taskings'), ...(px.todayProgress || []).map(tag('today')), ...fx.todayMid.map(tag('today')), T(dutyCard, 'c-duty'), T(ideasCard, 'c-ideas'),
       ...fx.week.map(tag('week')),
-      ...money(moneyCards(d)), ...money(moneyCardsLate(d), (k) => (k === 'automations' ? 'today' : 'money')),
-      ...fx.goals.map(tag('goals')), G(wd1Card, 'c-wd1'), G(studiesCard, 'c-studies'), G(mpatCard, 'c-mpat'),
+      ...money(moneyCards(d)), ...(px.money || []).map(tag('money')), ...money(moneyCardsLate(d), (k) => (k === 'automations' ? 'today' : 'money')),
+      ...(px.goals || []).map(tag('goals')), G(wd1Card, 'c-wd1'), G(mpatCard, 'c-mpat'),
       ...fx.health.map(tag('health')), ...(fx.links || []).map(tag('links')), ...fx.search.map(tag('search')),
-      ...safe(extraCards).map(tag('today'))].filter(Boolean));
-    updateStudyBar();
+      ...safe(extraCards).map(tag('today')), ...(fx.todayEnd || []).map(tag('today'))].filter(Boolean));
     $('updated').textContent = str(d.updated) ? '⟳ ' + fmtUpdated(str(d.updated)) : '';
     if (F) F.afterRender(d);
   }
@@ -716,7 +701,7 @@
   // Helpers for features.js (no data – functions only).
   const idTok = (k) => /gsis|pag_?ibig|philhealth/.test(String(k).toLowerCase().replace(/-/g, '_')) ||
     String(k).replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z]+/).some((w) => ['tin', 'id', 'ids', 'account', 'accounts', 'acct', 'number', 'numbers', 'no'].includes(w));
-  window.DN = { h, str, pick, arr, num, objs, fmtNum, card, empty, todayISO, isoDate, daysBetween, fmtDate, dueInfo, statusOf, hid, peso, moneyDate, billRows, subRows, idTok, rerender };
+  window.DN = { maskNum, h, str, pick, arr, num, objs, fmtNum, card, empty, todayISO, isoDate, daysBetween, fmtDate, dueInfo, statusOf, hid, peso, moneyDate, billRows, subRows, idTok, rerender };
 
   /* ---------- auth / data flow ---------- */
   async function fetchEnvelope() {

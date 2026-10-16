@@ -105,8 +105,47 @@
     const r = C.apply(raw, O.edits, true);
     missing = new Set(r.missing.map((e) => e.eid));
     merged = r.notes;
+    feedExercise(merged);
     return merged;
   }
+  // Minutes per day from health.exercise → the Exercise habit (counts toward its daily target + weekly progress).
+  function exerciseByDay(d) {
+    const hh = d && d.health && typeof d.health === 'object' && !Array.isArray(d.health) ? d.health : {};
+    const m = {};
+    D().objs(hh.exercise, 'date').forEach((x) => { const iso = isoOf(x.date), mn = D().num(x.minutes ?? x.min ?? x.duration); if (iso && mn != null && mn > 0) m[iso] = (m[iso] || 0) + Math.round(mn); });
+    return m;
+  }
+  function feedExercise(d) { if (window.Habits && window.Habits.setExternal && window.DN) { try { window.Habits.setExternal(exerciseByDay(d)); } catch (e) { console.warn(e); } } }
+  /* Generic record edits (transactions, va.leads, links…): add / set / del through the Outbox. */
+  const rawItemByKey = (sec, k) => { const i = C.findIndex(raw, { sec, key: k }); return i >= 0 ? C.listOf(raw, sec)[i] : null; };
+  const pendingAddOf = (sec, it) => (it && it._local === 'added' && it.id ? O.edits.find((e) => e.sec === sec && e.op === 'add' && e.val && e.val.id === it.id) : null);
+  const recKey = (sec, it) => (it && it._lkey) || C.keyOf(sec, it);
+  function recAdd(sec, v, label) {
+    if (!ready()) return null;
+    const id = 'loc-' + rand(4);
+    upsert({ eid: 'add:' + id, sec, op: 'add', key: 'id:' + id, label: label || C.textOf(sec, v), val: Object.assign({ id }, v), at: new Date().toISOString() });
+    return id;
+  }
+  function recSet(sec, it, v, label) {
+    if (!ready()) return false;
+    const at = new Date().toISOString(), pa = pendingAddOf(sec, it);
+    if (pa) { upsert(Object.assign({}, pa, { label: label || pa.label, val: Object.assign({ id: pa.val.id }, v), at })); return true; }
+    const k = recKey(sec, it), r = rawItemByKey(sec, k), prev = O.edits.find((e) => e.eid === `${sec}:set:${k}`);
+    upsert({ eid: `${sec}:set:${k}`, sec, op: 'set', key: k, label: prev ? prev.label : label || C.textOf(sec, r || it), labelText: prev ? prev.labelText : C.textOf(sec, r || it), val: v, at });
+    return true;
+  }
+  function recDel(sec, it, label) {
+    if (!ready()) return;
+    const pa = pendingAddOf(sec, it);
+    if (pa) { drop((e) => e.eid === pa.eid); save(); D().rerender(); return; }
+    const k = recKey(sec, it), r = rawItemByKey(sec, k), prev = O.edits.find((e) => e.eid === `${sec}:set:${k}`);
+    drop((e) => e.eid === `${sec}:set:${k}`);
+    upsert({ eid: `${sec}:del:${k}`, sec, op: 'del', key: k, label: prev ? prev.label : label || C.textOf(sec, r || it), labelText: prev ? prev.labelText : C.textOf(sec, r || it), val: null, at: new Date().toISOString() });
+  }
+  // Simple keyed edits: progress values (WD1 / savings), VA daily counters, exercise + MPAT log entries.
+  function setProgress(k, v) { if (!ready()) return; upsert({ eid: `progress:set:${k}`, sec: 'progress', op: 'set', key: k, label: k, val: v, at: new Date().toISOString() }); }
+  function logVaDaily(date, sent, replies) { if (!ready()) return; upsert({ eid: `va.daily:log:${date}`, sec: 'va.daily', op: 'log', key: 'd:' + date, label: `${date} ${sent}/${replies}`, val: { date, sent, replies }, at: new Date().toISOString() }); }
+  function logEntry(sec, v, label) { return recAdd(sec, v, label); }
 
   /* ================= small UI bits ================= */
   let toastEl = null;
@@ -246,32 +285,6 @@
     return card('lav', '🏆', 'Weekly review', body, { sub: `${wr && D().str(wr.week) ? D().str(wr.week) + ' · ' : ''}${fmtD(ws, { weekday: undefined })} – ${fmtD(we, { weekday: undefined })}` });
   }
 
-  /* ================= Goals ================= */
-  const AREA_COLORS = ['sky', 'mint', 'lav', 'peach', 'rose', 'lemon', 'aqua', 'lilac', 'coral'];
-  function goalsCard(d) {
-    const { h, card, pick, num, objs, dueInfo, empty, hid } = D();
-    const gs = objs(d.goals, 'title');
-    if (!gs.length) return card('peach', '🎯', 'Goals', empty('No goals yet — add one in notes.json (see README).'));
-    const list = h('div', { class: 'gl-list' }, gs.map((g) => {
-      const ms = objs(g.milestones, 'text');
-      const msDone = ms.filter((m) => m.done).length;
-      let pct = num(g.progress_pct);
-      const auto = pct == null && ms.length;
-      if (auto) pct = Math.round((msDone / ms.length) * 100);
-      pct = pct == null ? null : Math.max(0, Math.min(100, pct));
-      const area = pick(g, 'area', 'category');
-      const di = dueInfo(g.target_date, pct === 100);
-      return h('div', { class: 'gl' },
-        h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, pick(g, 'title', 'name') || '(goal)'), area ? h('span', { class: `chip area c-${AREA_COLORS[parseInt(hid(area.toLowerCase()), 36) % AREA_COLORS.length]}` }, area) : null),
-        h('div', { class: 'meter' }, h('div', { class: `bar${pct == null ? ' unknown' : ''}`, role: 'progressbar', 'aria-label': pick(g, 'title'), 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct ?? 0 }, h('span', { style: { width: (pct ?? 0) + '%' } })),
-          h('div', { class: 'meter-foot small muted' }, pct == null ? 'progress not set' : `${pct}%${auto ? ` · ${msDone}/${ms.length} milestones` : ''}`, di ? h('span', { class: `chip ${di.cls}` }, '🏁 ', di.label) : null)),
-        pick(g, 'next_step', 'next') ? h('p', { class: 'gl-next' }, '👉 ', pick(g, 'next_step', 'next')) : null,
-        ms.length ? h('details', { class: 'm-fold gl-ms' }, h('summary', null, h('span', null, `Milestones ${msDone}/${ms.length}`)),
-          h('ul', { class: 'gl-mlist' }, ms.map((m) => h('li', { class: m.done ? 'done' : '' }, m.done ? '✅ ' : '⬜ ', pick(m, 'text', 'title', 'item'))))) : null);
-    }));
-    return card('peach', '🎯', 'Goals', list, { badge: gs.length });
-  }
-
   /* ================= Health & rest ================= */
   const SVG = 'http://www.w3.org/2000/svg';
   function svgEl(tag, attrs) { const n = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v); return n; }
@@ -316,20 +329,54 @@
     const dIn = h('input', { type: 'date', id: 'hl-date', value: t, max: t, 'aria-label': 'Date' });
     const sIn = h('input', { type: 'number', id: 'hl-sleep', inputmode: 'decimal', step: '0.25', min: '0', max: '16', placeholder: 'Sleep h', 'aria-label': 'Sleep hours' });
     const wIn = h('input', { type: 'number', id: 'hl-weight', inputmode: 'decimal', step: '0.1', min: '20', max: '300', placeholder: 'Weight kg', 'aria-label': 'Weight kg' });
-    const form = h('form', { class: 'hl-log', onsubmit: (e) => {
+    const exT = h('select', { id: 'hl-ex-type', 'aria-label': 'Exercise type' }, C.EX_TYPES.map((x) => h('option', { value: x }, x)));
+    const exM = h('input', { type: 'number', id: 'hl-ex-min', inputmode: 'numeric', step: '1', min: '1', max: '600', placeholder: 'Minutes', 'aria-label': 'Exercise minutes' });
+    const form = h('form', { class: 'hl-log', novalidate: true, onsubmit: (e) => {
       e.preventDefault();
-      const date = dIn.value || t, s = num(sIn.value), w = num(wIn.value);
-      if (s == null && w == null) { toast('Enter sleep hours and/or weight'); return; }
+      const date = dIn.value || t, s = num(sIn.value), w = num(wIn.value), m = num(exM.value);
+      if (s == null && w == null && m == null) { toast('Enter sleep hours, weight and/or exercise minutes'); return; }
       if (s != null && (s < 0 || s > 16)) { toast('Sleep hours look off (0–16)'); return; }
       if (w != null && (w < 20 || w > 300)) { toast('Weight looks off (20–300 kg)'); return; }
+      if (m != null && (m < 1 || m > 600)) { toast('Exercise minutes look off (1–600)'); return; }
       if (s != null) logHealth('health.sleep', date, s); if (w != null) logHealth('health.weight', date, w);
+      if (m != null) logExercise(date, exT.value, m);
       toast('📝 Logged on this device – in the Outbox for Denx');
-    } }, h('p', { class: 'm-h' }, '📝 Quick log'), h('div', { class: 'hl-row' }, dIn, sIn, wIn, h('button', { type: 'submit', class: 'qc-add' }, 'Log')));
-    return card('aqua', '💪', 'Health & rest', [tiles,
-      chart('😴 Sleep (hours)', sleep.slice(-14), { ref: 7, fmt: (v) => v + ' h', label: 'Sleep hours, last entries', color: '#5b6fd6', unit: 'night' }),
-      chart('⚖️ Weight (kg)', weight.slice(-20), { fmt: (v) => v + ' kg', label: 'Weight trend', color: '#17a28f', unit: 'entry' }),
-      pftEl, pick(hh, 'notes', 'note') ? h('p', { class: 'm-note' }, '📝 ', pick(hh, 'notes', 'note')) : null, form,
-      h('p', { class: 'small muted' }, 'Pink dots = logged on this device (pending sync). Dashed line = 7 h.')]);
+    } }, h('p', { class: 'm-h' }, '📝 Quick log'),
+      h('div', { class: 'hl-row' }, dIn, sIn, wIn),
+      h('div', { class: 'hl-row hl-ex' }, h('span', { class: 'hl-ex-l', 'aria-hidden': 'true' }, '🏃'), exT, exM, h('button', { type: 'submit', class: 'qc-add', id: 'hl-submit' }, 'Log')));
+    const ex = exerciseBlock(d);
+    return card('aqua', '💪', 'Health & rest', h('div', { class: 'hl-grid' },
+      h('div', { class: 'hl-col' }, tiles, chart('😴 Sleep (hours)', sleep.slice(-14), { ref: 7, fmt: (v) => v + ' h', label: 'Sleep hours, last entries', color: '#5b6fd6', unit: 'night' }),
+        chart('⚖️ Weight (kg)', weight.slice(-20), { fmt: (v) => v + ' kg', label: 'Weight trend', color: '#17a28f', unit: 'entry' })),
+      h('div', { class: 'hl-col' }, ex, pftEl, pick(hh, 'notes', 'note') ? h('p', { class: 'm-note' }, '📝 ', pick(hh, 'notes', 'note')) : null),
+      h('div', { class: 'hl-col' }, form, h('p', { class: 'small muted' }, 'Pink dots = logged on this device (pending sync). Dashed line = 7 h. Exercise minutes also count toward the 🏃 Exercise habit.'))), { wide: true });
+  }
+  /* ---- exercise log (notes.json health.exercise[] + phone edits) ---- */
+  function logExercise(date, type, minutes) {
+    const v = C.exVal({ date, type, minutes });
+    if (!v || !ready()) return false;
+    return !!recAdd('health.exercise', v, `${v.type} ${v.minutes} min`);
+  }
+  function exerciseBlock(d) {
+    const { h, objs, num } = D();
+    const hh = d.health && typeof d.health === 'object' && !Array.isArray(d.health) ? d.health : {};
+    const t = today(), ws = weekStart(t);
+    const xs = objs(hh.exercise, 'date').map((x) => ({ iso: isoOf(x.date), type: C.EX_TYPES.includes(x.type) ? x.type : 'Exercise', min: Math.round(num(x.minutes ?? x.min ?? x.duration) || 0), local: !!x._local })).filter((x) => x.iso && x.min > 0 && x.iso <= t);
+    const wk = xs.filter((x) => x.iso >= ws);
+    const byType = {}; wk.forEach((x) => { byType[x.type] = (byType[x.type] || 0) + x.min; });
+    const tot = wk.reduce((a, x) => a + x.min, 0), mx = Math.max(1, ...Object.values(byType));
+    const hb = (window.Habits && window.Habits.summary ? window.Habits.summary() : []).find((x) => x.exercise);
+    const goal = hb && hb.type !== 'check' ? (hb.weekly ? hb.weekly * hb.target : hb.target * 7) : null;
+    const manual = hb ? Math.max(0, hb.weekVal - tot) : 0;
+    return h('div', { class: 'hl-ex-sum', id: 'hl-exercise' },
+      h('p', { class: 'm-h' }, '🏃 Exercise this week'),
+      h('div', { class: 'm-stats' },
+        h('div', { class: 'm-stat m-paid' }, h('span', { class: 'm-stat-v' }, `${tot + manual} min`), h('span', { class: 'm-stat-l' }, goal ? `of ~${goal} min habit goal` : 'logged + habit timer')),
+        h('div', { class: 'm-stat m-gross' }, h('span', { class: 'm-stat-v' }, String(wk.length)), h('span', { class: 'm-stat-l' }, `session${wk.length === 1 ? '' : 's'} logged`))),
+      Object.keys(byType).length || manual ? h('ul', { class: 'ex-bars' }, Object.entries(byType).sort((a, b) => b[1] - a[1]).map(([k, v]) => h('li', null, h('span', { class: 'ex-k' }, k), h('span', { class: 'ex-bar' }, h('span', { style: { width: Math.round((v / mx) * 100) + '%' } })), h('span', { class: 'ex-v' }, v + ' min'))),
+        manual ? h('li', { class: 'muted' }, h('span', { class: 'ex-k' }, 'Habit timer'), h('span', { class: 'ex-bar' }, h('span', { style: { width: Math.min(100, Math.round((manual / mx) * 100)) + '%' } })), h('span', { class: 'ex-v' }, manual + ' min')) : null)
+        : h('p', { class: 'empty' }, 'No exercise logged this week yet.'),
+      xs.length ? h('ul', { class: 'ex-recent small' }, xs.slice().sort((a, b) => b.iso.localeCompare(a.iso)).slice(0, 5).map((x) => h('li', null, `${fmtD(x.iso)} · ${x.type} · ${x.min} min`, x.local ? h('span', { class: 'chip local' }, '✎') : null))) : null);
   }
 
   /* ================= Quick notes (notes.json `quick_notes` + local) ================= */
@@ -449,7 +496,7 @@
   const KEY_CARD = { today: 'c-schedule', schedule: 'c-schedule', todo: 'c-todo', todos: 'c-todo', taskings: 'c-taskings', tasks: 'c-taskings', reminders: 'c-reminders', duty_log: 'c-duty', duty: 'c-duty',
     wd1: 'c-wd1', studies: 'c-studies', mmpa: 'c-studies', mpat_log: 'c-mpat', mpat: 'c-mpat', ideas: 'c-ideas', verse: 'c-hero', bills: 'm-bills', bills_outlook: 'm-bills', bills_summary: 'm-bills',
     subscriptions: 'm-subscriptions', decisions: 'm-decisions', automations: 'm-automations', finance_tips: 'm-finance_tips', income: 'm-pay', debts: 'm-debts', balances: 'm-freecash',
-    wins: 'c-review', weekly_review: 'c-review', goals: 'c-goals', health: 'c-health', quick_notes: 'c-quick_notes', links: 'c-links' };
+    wins: 'c-review', weekly_review: 'c-review', goals: 'c-goals', health: 'c-health', quick_notes: 'c-quick_notes', links: 'c-links', finance: 'c-savings', va: 'c-va', transactions: 'm-txlog' };
   const SKIP = new Set(['updated', 'version', 'schema', 'habits']);
   function buildIndex(d) {
     const idTok = D().idTok, out = [];
@@ -457,7 +504,7 @@
       if (v == null) return acc;
       if (typeof v === 'string' || typeof v === 'number') { const s = String(v).trim(); if (s) acc.push(s); return acc; }
       if (Array.isArray(v)) { v.forEach((x) => leaves(x, acc)); return acc; }
-      if (typeof v === 'object') for (const [k, x] of Object.entries(v)) if (!k.startsWith('_') && !idTok(k) && k !== 'id') leaves(x, acc);
+      if (typeof v === 'object') for (const [k, x] of Object.entries(v)) if (!k.startsWith('_') && !idTok(k) && k !== 'id') { if (['method', 'card', 'payment'].includes(k) && typeof x === 'string') acc.push(D().maskNum(x)); else leaves(x, acc); }
       return acc;
     };
     for (const [k, v] of Object.entries(d || {})) {
@@ -473,7 +520,7 @@
   }
   const LABEL = { today: 'Schedule', todo: 'To-do', taskings: 'Taskings', reminders: 'Reminders', duty_log: 'Duty log', wd1: 'WD1', studies: 'Studies', mpat_log: 'MPAT', ideas: 'Ideas', verse: 'Verse',
     bills: 'Bills', bills_outlook: 'Bills', subscriptions: 'Subscriptions', decisions: 'Decisions', automations: 'Automations', finance_tips: 'Strategy', income: 'Pay', debts: 'Debts', balances: 'Cash',
-    wins: 'Wins', weekly_review: 'Review', goals: 'Goals', health: 'Health', quick_notes: 'Quick notes', habits: 'Habits', links: 'Links' };
+    wins: 'Wins', weekly_review: 'Review', goals: 'Goals', health: 'Health', quick_notes: 'Quick notes', habits: 'Habits', links: 'Links', finance: 'Savings', va: 'VA hunt', transactions: 'Money log' };
   function marked(text, terms) {
     const { h } = D(), frag = document.createDocumentFragment();
     if (!terms.length) { frag.append(text); return frag; }
@@ -546,9 +593,57 @@
       for (const el of board.children) { el.hidden = (el.dataset.sec || 'today') !== sec; if (!el.hidden) shown++; }
       if (!shown) { const ph = D().card('mist', '🌿', 'Nothing here yet', D().empty('No data for this section in notes.json yet – see README “For Denx”.')); ph.id = 'c-empty-sec'; ph.dataset.sec = sec; board.append(ph); }
     }
+    layout();
     const nav = document.getElementById('secnav');
     if (nav) nav.querySelectorAll('.sn-btn').forEach((b) => { const on = b.dataset.sec === sec; b.classList.toggle('on', on); b.setAttribute('aria-current', on ? 'page' : 'false'); });
   }
+  /* ================= masonry layout: CSS grid + row spans measured here (gap-free at any width) ================= */
+  const ROW = 4; let ro = null, rafL = 0, lastCols = 0;
+  function colsOf(board) { return Math.max(1, parseInt(getComputedStyle(board).getPropertyValue('--cols'), 10) || 1); }
+  // Classic masonry: each card (in board order) goes to the column(s) whose bottom is highest up; positions are written
+  // as explicit grid lines (4 px rows). Then the last card of every column grows to the lowest bottom → an even edge.
+  function spanRows(board) {
+    const gap = parseFloat(getComputedStyle(board).getPropertyValue('--gap')) || 14, cols = colsOf(board);
+    const vis = Array.from(board.children).filter((el) => !el.hidden);
+    if (!vis.length) return;
+    vis.forEach((el) => { el.style.minHeight = ''; el.style.gridColumn = `span ${Math.min(cols, el._span || 1)}`; el.style.gridRow = 'auto'; });
+    const hs = vis.map((el) => el.getBoundingClientRect().height);
+    const H = new Array(cols).fill(0), last = new Array(cols).fill(-1), pos = [];
+    vis.forEach((el, i) => {
+      const sp = Math.min(cols, el._span || 1), rows = Math.max(1, Math.ceil((hs[i] + gap) / ROW));
+      let best = 0, bestTop = Infinity;
+      for (let c = 0; c + sp <= cols; c++) { const top = Math.max(...H.slice(c, c + sp)); if (top < bestTop) { bestTop = top; best = c; } }
+      pos.push({ c: best, sp, top: bestTop, rows });
+      for (let c = best; c < best + sp; c++) { H[c] = bestTop + rows; last[c] = i; }
+    });
+    const maxH = Math.max(...H);
+    new Set(last.filter((k) => k >= 0)).forEach((k) => { const p = pos[k], grow = maxH - (p.top + p.rows); if (grow > 0 && cols > 1) { p.rows += grow; vis[k].style.minHeight = (p.rows * ROW - gap) + 'px'; } });
+    vis.forEach((el, i) => { const p = pos[i]; el.style.gridColumn = `${p.c + 1} / span ${p.sp}`; el.style.gridRow = `${p.top + 1} / span ${p.rows}`; });
+  }
+  function layout() {
+    const board = document.getElementById('board');
+    if (!board || !window.getComputedStyle) return;
+    const cols = colsOf(board);
+    const vis = Array.from(board.children).filter((el) => !el.hidden);
+    const spans = vis.map((el) => {
+      if (vis.length === 1 || el.id === 'c-outbox' || el.classList.contains('full')) return cols;
+      if (el.id === 'c-hero') return Math.max(1, cols - 1);
+      if (el.classList.contains('wide')) return cols >= 3 ? 2 : cols;
+      return 1;
+    });
+    // few cards on a tab: widen them so the row is filled (no empty columns)
+    let total = spans.reduce((a, x) => a + x, 0);
+    for (let guard = 0; total < cols && guard < 50; guard++) { let k = 0; spans.forEach((x, i) => { if (x < spans[k]) k = i; }); spans[k]++; total++; }
+    vis.forEach((el, i) => { el._span = Math.min(spans[i], cols); });
+    board.classList.add('masonry');
+    lastCols = cols;
+    spanRows(board);
+    if (window.ResizeObserver) {
+      if (!ro) ro = new ResizeObserver(() => { cancelAnimationFrame(rafL); rafL = requestAnimationFrame(() => { const b = document.getElementById('board'); if (b) spanRows(b); }); });
+      ro.disconnect(); vis.forEach((el) => ro.observe(el));
+    }
+  }
+  window.addEventListener('resize', () => { const b = document.getElementById('board'); if (!b) return; const c = colsOf(b); if (c !== lastCols) { lastCols = c; layout(); } else spanRows(b); });
   function afterRender(d) {
     buildIndex(d);
     const nav = navEl();
@@ -563,10 +658,10 @@
   function cards(d) {
     const safe = (fn, id) => { try { const el = fn(d); if (el) el.id = id; return el; } catch (e) { console.error(e); return null; } };
     return {
-      todayTop: [safe(captureCard, 'c-capture'), ready() && (pending() || lockedOld || clearedNote) ? safe(outboxCard, 'c-outbox') : null],
+      todayTop: [safe(captureCard, 'c-capture')],
+      todayEnd: [ready() && (pending() || lockedOld || clearedNote) ? safe(outboxCard, 'c-outbox') : null],
       todayMid: [safe(quickNotesCard, 'c-quick_notes')],
       week: [safe(weekCard, 'c-week'), safe(reviewCard, 'c-review')],
-      goals: [d.goals != null ? safe(goalsCard, 'c-goals') : null],
       health: [safe(healthCard, 'c-health')],
       links: [safe(linksCard, 'c-links')],
       search: [safe(searchCard, 'c-search')],
@@ -612,5 +707,6 @@
     if (changed) D().rerender();
     return changed;
   }
-  window.Features = { syncPayload, syncApply, unlock, lock, ready, merge, cards, afterRender, set, undo, add, logHealth, saveLink, deleteLink, localChip, pending, go, _flush: () => saving, _tick: tickPings };
+  window.Features = { syncPayload, syncApply, unlock, lock, ready, merge, cards, afterRender, set, undo, add, logHealth, logExercise, saveLink, deleteLink, localChip, pending, go, layout,
+    recAdd, recSet, recDel, setProgress, logVaDaily, logEntry, toast, exerciseByDay, pendingEdits: () => (O ? O.edits.slice() : []), raw: () => raw, _flush: () => saving, _tick: tickPings };
 })();

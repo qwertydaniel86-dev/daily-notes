@@ -12,10 +12,10 @@
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const SEEDS = [
     { id: 'seed-bible', name: 'Bible reading / devotion', emoji: '📖', color: 'sun', reminder: '05:30' },
-    { id: 'seed-prayer', name: 'Prayer', emoji: '🙏', color: 'lav' },
+    { id: 'seed-prayer', name: 'Prayer', emoji: '🙏', color: 'lav', type: 'count', target: 3, unit: 'times' },
     { id: 'seed-exercise', name: 'Exercise', emoji: '🏃', color: 'mint', type: 'timer', target: 30, unit: 'min', frequency: { times_per_week: 4 } },
     { id: 'seed-mmpa', name: 'Study MMPA', emoji: '📚', color: 'lemon', type: 'timer', target: 45, unit: 'min', frequency: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] },
-    { id: 'seed-mpat', name: 'MPAT practice', emoji: '✈️', color: 'sky', frequency: { times_per_week: 3 } },
+    { id: 'seed-mpat', name: 'MPAT practice', emoji: '✈️', color: 'sky', type: 'count', target: 10, unit: 'times' },
     { id: 'seed-water', name: 'Water', emoji: '💧', color: 'aqua', type: 'count', target: 8, unit: 'glasses' },
     { id: 'seed-sleep', name: 'Sleep by 2300', emoji: '😴', color: 'lilac', reminder: '22:30' },
   ];
@@ -115,7 +115,7 @@
     const fromNotes = notesDefs(notes);
     s.habits = fromNotes.length ? fromNotes : SEEDS.map((x) => normHabit(x, x.id));
     fromNotes.forEach((n) => (s.known[n.id] = 1));
-    s.known._seeded = 1;
+    s.known._seeded = 1; s.known._mig_targets_v2 = today();
     return s;
   }
   function mergeNotes(notes) {
@@ -128,6 +128,45 @@
     }
     return changed;
   }
+
+  /* ---------- target history + one-time migration (v2: Prayer 3×/day, MPAT 10×/day) ----------
+     S.known._hist = { <habitId>: [{until: 'YYYY-MM-DD', type, target, freq}, …] } (ascending): days BEFORE `until` are judged
+     by that older rule, so changing a goal never rewrites past streaks. Kept inside `known` so older app versions keep it. */
+  function recordHist(hb, until) {
+    const H0 = (S.known._hist = S.known._hist && typeof S.known._hist === 'object' ? S.known._hist : {});
+    const hs = (H0[hb.id] = Array.isArray(H0[hb.id]) ? H0[hb.id] : []);
+    if (hs.some((r) => r && r.until === until)) return;
+    hs.push({ until, type: hb.type, target: hb.target, freq: JSON.parse(JSON.stringify(hb.freq)) });
+    hs.sort((a, b) => str(a.until).localeCompare(str(b.until)));
+    RC = {};
+  }
+  function migrate() {
+    if (!S || S.known._mig_targets_v2) return false;
+    const t = today();
+    const find = (id, re) => S.habits.find((x) => x.id === id) || S.habits.find((x) => re.test(x.name));
+    const fix = (hb, target) => {
+      if (!hb || (hb.type === 'count' && hb.target === target && hb.freq.type === 'daily')) return;
+      recordHist(hb, t);
+      hb.type = 'count'; hb.target = target; hb.unit = 'times'; hb.freq = { type: 'daily' };
+    };
+    fix(find('seed-prayer', /^prayer\b/i), 3);
+    fix(find('seed-mpat', /\bmpat\b/i), 10);
+    S.known._mig_targets_v2 = t; RC = {};
+    return true;
+  }
+  let RC = {}; // parsed rule history cache
+  function ruleOf(hb, d) {
+    let hs = RC[hb.id];
+    if (!hs) {
+      const raw0 = S.known && S.known._hist && Array.isArray(S.known._hist[hb.id]) ? S.known._hist[hb.id] : [];
+      hs = RC[hb.id] = raw0.filter((r) => r && isoDate(r.until)).map((r) => ({ until: isoDate(r.until), target: r.type === 'check' ? 1 : clampInt(r.target, 1, 9999, 1), freq: normFreq(r.freq) }));
+    }
+    for (const r of hs) if (d < r.until) return r;
+    return hb;
+  }
+  // Extra minutes from the encrypted notes / phone edits (Health → exercise log) that count toward the Exercise habit.
+  let EXT = {}, EXT_SIG = '';
+  const exHabit = () => (S ? S.habits.find((x) => !x.archived && x.id === 'seed-exercise') || S.habits.find((x) => !x.archived && /^exercise\b/i.test(x.name)) || null : null);
 
   /* ---------- state + encrypted persistence ---------- */
   let lastNotes = {};
@@ -154,7 +193,7 @@
 
   async function unlock(k, env, notes) {
     lastNotes = notes && typeof notes === 'object' ? notes : {};
-    if (S && key === k && salt === env.salt) { if (mergeNotes(notes)) { save(); paint(); } return; }
+    if (S && key === k && salt === env.salt) { const a = mergeNotes(notes), b = migrate(); if (a || b) { save(); paint(); } return; }
     key = k; salt = env.salt; iter = env.iter; S = null; lockedBlob = null;
     let blob = null;
     try { blob = JSON.parse(localStorage.getItem(LS)); } catch { /* corrupt → treat as none */ }
@@ -163,7 +202,8 @@
       else lockedBlob = blob;
     }
     if (lockedBlob) { paint(); return; } // never overwrite data we cannot read – offer recovery instead
-    if (!S) { S = freshState(notes); syncSig = sigOf(S); save(true); } else { syncSig = sigOf(S); if (mergeNotes(notes)) save(); }
+    if (!S) { S = freshState(notes); syncSig = sigOf(S); save(true); } else { syncSig = sigOf(S); const a = mergeNotes(notes), b = migrate(); if (a || b) save(); }
+    RC = {};
     ui.date = today(); lastDay = ui.date;
     start(); paint();
   }
@@ -176,22 +216,29 @@
   /* ---------- scoring ---------- */
   const H = (id) => S.habits.find((x) => x.id === id);
   const raw = (id, d) => (S.log[d] && S.log[d][id]) || 0;
-  const val = (hb, d) => Math.max(0, raw(hb.id, d));
+  const extOf = (hb, d) => (EXT[d] && hb === exHabit() ? EXT[d] : 0);
+  const manual = (hb, d) => Math.max(0, raw(hb.id, d));
+  const val = (hb, d) => manual(hb, d) + extOf(hb, d);
   const isSkip = (hb, d) => raw(hb.id, d) < 0;
-  const done = (hb, d) => val(hb, d) >= hb.target;
-  const frac = (hb, d) => Math.min(1, val(hb, d) / hb.target);
-  const scheduled = (hb, d) => hb.freq.type !== 'days' || hb.freq.days.includes(dow(d));
+  const tgt = (hb, d) => ruleOf(hb, d).target;
+  const done = (hb, d) => val(hb, d) >= tgt(hb, d);
+  const frac = (hb, d) => Math.min(1, val(hb, d) / tgt(hb, d));
+  const fq = (hb, d) => ruleOf(hb, d).freq;
+  const scheduled = (hb, d) => { const f = fq(hb, d); return f.type !== 'days' || f.days.includes(dow(d)); };
+  // a day judged by an older "X per week" rule only counts when done (never breaks a daily streak)
+  const legacyWeekly = (hb, d) => hb.freq.type !== 'weekly' && fq(hb, d).type === 'weekly';
   function weekDone(hb, d) { const ws = weekStart(d); let n = 0; for (let i = 0; i < 7; i++) if (done(hb, addDays(ws, i))) n++; return n; }
   // Is the habit part of day d's "to do" (ring / perfect day)? Weekly goals only become required when the week would
   // otherwise be missed – rest days never count against you (Blossom's "on track").
   function required(hb, d) {
     if (hb.archived || d < hb.created || isSkip(hb, d)) return false;
-    if (hb.freq.type !== 'weekly') return scheduled(hb, d);
+    const f = fq(hb, d);
+    if (f.type !== 'weekly') return scheduled(hb, d);
     if (done(hb, d)) return true;
     const ws = weekStart(d); let before = 0;
     for (let i = 0; i < 7; i++) { const x = addDays(ws, i); if (x < d && done(hb, x)) before++; }
     const left = 7 - ((dow(d) + 6) % 7); // days remaining incl. d
-    return hb.freq.times - before >= left;
+    return f.times - before >= left;
   }
   function dayScore(d) {
     const hs = S.habits.filter((hb) => required(hb, d));
@@ -212,7 +259,7 @@
     }
     for (let d = start; d <= t; d = addDays(d, 1)) {
       if (!scheduled(hb, d) || isSkip(hb, d)) continue;
-      if (done(hb, d)) { run++; best = Math.max(best, run); } else if (d !== t) run = 0;
+      if (done(hb, d)) { run++; best = Math.max(best, run); } else if (d !== t && !legacyWeekly(hb, d)) run = 0;
     }
     return { cur: run, best, unit: 'd' };
   }
@@ -229,7 +276,7 @@
     for (let i = 0; i < days; i++) {
       const d = addDays(t, -i);
       if (d < hb.created || !scheduled(hb, d) || isSkip(hb, d)) continue;
-      if (d === t && !done(hb, d)) continue;
+      if ((d === t || legacyWeekly(hb, d)) && !done(hb, d)) continue;
       due++; if (done(hb, d)) ok++;
     }
     return due ? ok / due : null;
@@ -253,14 +300,14 @@
     save(); paint();
     if (v >= hb.target && d === today()) { const sc = dayScore(d); if (sc.pct === 1) celebrate(); }
   }
-  function toggle(hb, d) { setVal(hb, d, done(hb, d) ? 0 : hb.target); }
+  function toggle(hb, d) { setVal(hb, d, done(hb, d) ? 0 : Math.max(1, tgt(hb, d) - extOf(hb, d))); }
   const step = (hb) => (hb.type === 'timer' ? 5 : 1);
   function timerToggle(hb) {
     const r = S.running[hb.id];
     if (r) {
       delete S.running[hb.id];
       const mins = Math.max(1, Math.round((Date.now() - r.start) / 60000));
-      setVal(hb, r.date || today(), val(hb, r.date || today()) + mins);
+      setVal(hb, r.date || today(), manual(hb, r.date || today()) + mins);
       toast(`⏱️ +${mins} min ${hb.name}`);
     } else { S.running[hb.id] = { start: Date.now(), date: ui.date || today() }; save(); paint(); }
   }
@@ -288,6 +335,7 @@
 
   /* ---------- views ---------- */
   function paint() {
+    RC = {};
     const fk = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.fk : null;
     if (!key) { root.replaceChildren(); return; }
     if (lockedBlob) { root.replaceChildren(header(), recoverView()); return; }
@@ -336,7 +384,7 @@
   }
 
   function habitRow(hb, d, req) {
-    const st = streaks(hb), dn = done(hb, d), sk = isSkip(hb, d), v = val(hb, d), t = today();
+    const st = streaks(hb), dn = done(hb, d), sk = isSkip(hb, d), v = val(hb, d), mv = manual(hb, d), t = today(), isEx = hb === exHabit();
     const run = S.running[hb.id];
     const ws = weekStart(d);
     const dots = h('span', { class: 'dots', 'aria-hidden': 'true' }, Array.from({ length: 7 }, (_, i) => {
@@ -347,6 +395,7 @@
     if (hb.freq.type === 'weekly') meta.push(`${weekDone(hb, d)}/${hb.freq.times} this week` + (!req && !dn ? (weekDone(hb, d) >= hb.freq.times ? ' ✓' : ' · on track') : ''));
     else if (!scheduled(hb, d)) meta.push('Rest day');
     if (hb.type !== 'check') meta.push(goalLabel(hb));
+    if (isEx) { let wm = 0; for (let i = 0; i < 7; i++) wm += val(hb, addDays(ws, i)); meta.push(`${wm} min this wk`); }
     if (sk) meta.push('Skipped ⏭');
     let ctl;
     if (hb.type === 'check') {
@@ -354,12 +403,13 @@
     } else {
       const shown = run ? v + Math.floor((Date.now() - run.start) / 60000) : v;
       ctl = h('span', { class: 'stepper' },
-        btn('−', () => setVal(hb, d, Math.max(0, v - step(hb))), 'st-btn', { 'aria-label': `Less ${hb.name}`, disabled: v <= 0 || null, 'data-fk': 'm-' + hb.id }),
-        h('button', { type: 'button', class: 'st-val' + (dn ? ' on' : ''), 'aria-label': `${hb.name}: ${v} of ${hb.target} ${hb.unit}. Tap to add ${step(hb)}`, 'data-fk': 'v-' + hb.id, onclick: () => setVal(hb, d, v + step(hb)) },
-          ring(Math.min(1, shown / hb.target), 40, 4, dn ? '✓' : String(shown), 'tiny'), null),
-        btn('+', () => setVal(hb, d, v + step(hb)), 'st-btn', { 'aria-label': `More ${hb.name}`, 'data-fk': 'p-' + hb.id }),
+        btn('−', () => setVal(hb, d, Math.max(0, mv - step(hb))), 'st-btn', { 'aria-label': `Less ${hb.name}`, disabled: mv <= 0 || null, 'data-fk': 'm-' + hb.id }),
+        h('button', { type: 'button', class: 'st-val' + (dn ? ' on' : ''), 'aria-label': `${hb.name}: ${v} of ${hb.target} ${hb.unit}. Tap to add ${step(hb)}`, 'data-fk': 'v-' + hb.id, onclick: () => setVal(hb, d, mv + step(hb)) },
+          ring(Math.min(1, shown / hb.target), 40, 4, hb.type === 'count' && hb.target > 1 ? `${shown}/${hb.target}` : dn ? '✓' : String(shown), 'tiny' + (hb.type === 'count' && hb.target > 1 ? ' frac' : '')), null),
+        btn('+', () => setVal(hb, d, mv + step(hb)), 'st-btn', { 'aria-label': `More ${hb.name}`, 'data-fk': 'p-' + hb.id }),
         hb.type === 'timer' && d === t ? btn(run ? '⏸' : '▶', () => timerToggle(hb), 'st-btn play' + (run ? ' live' : ''), { 'aria-label': (run ? 'Stop timer for ' : 'Start timer for ') + hb.name, 'data-fk': 't-' + hb.id }) : null);
     }
+    if (isEx && window.Features && window.Features.openExerciseLog) ctl = h('span', { class: 'hb-ctls' }, btn('📝', () => window.Features.openExerciseLog(d), 'st-btn ex-log', { 'aria-label': 'Log an exercise session (type + minutes)', title: 'Log a session (Gym, Run, Walk…)', 'data-fk': 'x-' + hb.id }), ctl);
     return h('li', { class: `hb-row c-${hb.color}` + (dn ? ' done' : '') + (!req && !dn ? ' rest' : ''), vars: { '--hc': HEX[hb.color] } },
       h('button', { type: 'button', class: 'hb-emoji', 'aria-label': `${hb.name} details`, 'data-fk': 'e-' + hb.id, onclick: () => { ui.view = 'detail'; ui.detail = hb.id; ui.month = null; paint(); } }, hb.emoji),
       h('div', { class: 'hb-main' },
@@ -495,6 +545,7 @@
         const data = normState(await NotesCrypto.decryptJSON(k, lockedBlob, KIND));
         const wasBak = lockedBlob._bak; lockedBlob = null;
         if (S && wasBak) mergeState(data); else S = data;
+        migrate(); RC = {};
         if (wasBak) localStorage.removeItem(LS_BAK);
         await save(); ui.date = today(); start(); toast('🌸 Habit history recovered'); paint();
       } catch { msg.textContent = 'That passphrase did not open the habit data.'; }
@@ -550,7 +601,11 @@
       if (fr.type === 'days' && fr.days.length === 7) { fr.type = 'daily'; delete fr.days; }
       const out = { name: nm.slice(0, 60), emoji: f.emoji, color: f.color, type: f.type, target: f.type === 'check' ? 1 : clampInt(target.value, 1, 9999, 1), unit: f.type === 'timer' ? 'min' : f.type === 'count' ? unit.value.trim().slice(0, 16) : '', freq: fr, reminder: hm(rem.value) };
       if (isNew) S.habits.push(Object.assign({ id: rid(), archived: false, created: today() }, out));
-      else Object.assign(hb, out);
+      else {
+        const changed = hb.type !== out.type || hb.target !== out.target || JSON.stringify(hb.freq) !== JSON.stringify(out.freq);
+        if (changed && Object.keys(S.log).some((x) => x < today() && S.log[x][hb.id])) recordHist(hb, today());
+        Object.assign(hb, out); RC = {};
+      }
       save(); closeSheet(); toast(isNew ? `🌱 Planted “${out.name}”` : 'Saved'); if (isNew) ui.view = 'today'; paint();
       if (out.reminder && !S.settings.notify) toast('Tip: enable notifications in Manage → Reminders');
     } },
@@ -597,7 +652,7 @@
     let env;
     try { env = JSON.parse(await file.text()); } catch { toast('Not a valid backup file'); return; }
     if (!env || env.kind !== KIND) { toast('That file is not a Daily Notes habit backup'); return; }
-    const apply = (data) => { mergeState(normState(data)); save(); paint(); toast(`⬆️ Imported ${data.habits ? data.habits.length : 0} habits`); };
+    const apply = (data) => { mergeState(normState(data)); migrate(); RC = {}; save(); paint(); toast(`⬆️ Imported ${data.habits ? data.habits.length : 0} habits`); };
     if (env.salt === salt) { try { apply(await NotesCrypto.decryptJSON(key, env, KIND)); return; } catch { /* fall through to passphrase */ } }
     const inp = h('input', { type: 'password', placeholder: 'Passphrase used when exported', 'aria-label': 'Passphrase used when exported' });
     const msg = h('p', { class: 'gate-msg', role: 'alert' });
@@ -664,11 +719,27 @@
     const local = S, remote = normState(data);
     S = normState(data); S.notified = local.notified || {};
     if (mergeLocal) mergeState(normState(local));
-    mergeNotes(lastNotes);
+    mergeNotes(lastNotes); migrate(); RC = {};
     const differs = sigOf(S) !== sigOf(remote);
     syncSig = sigOf(S); save(true);
     if (!sheetEl) paint();
     return differs;
   }
-  window.Habits = { syncReady: ready, syncExport, syncAdopt, el: () => root, unlock, lock, _flush: () => saving, dueOn, weekStats, names, notifyOn, discreet, notify };
+  // Exercise minutes per day from the exercise log ({ 'YYYY-MM-DD': minutes }); repaints only when it changed.
+  function setExternal(map) { const m = map && typeof map === 'object' ? map : {}; const sg = JSON.stringify(m); if (sg === EXT_SIG) return; EXT = m; EXT_SIG = sg; if (S && !sheetEl) paint(); }
+  // Read-only per-habit summary for the Goals tab.
+  function summary() {
+    if (!ready()) return [];
+    const t = today(), ws = weekStart(t);
+    return S.habits.filter((hb) => !hb.archived).map((hb) => {
+      let weekVal = 0, weekDays = 0, monthVal = 0;
+      for (let i = 0; i < 7; i++) { const x = addDays(ws, i); if (x > t) break; weekVal += val(hb, x); if (done(hb, x)) weekDays++; }
+      for (let i = 0; i < 30; i++) monthVal += val(hb, addDays(t, -i));
+      const st = streaks(hb);
+      return { id: hb.id, name: hb.name, emoji: hb.emoji, type: hb.type, target: hb.target, unit: hb.unit, freq: freqLabel(hb), weekly: hb.freq.type === 'weekly' ? hb.freq.times : null,
+        today: val(hb, t), doneToday: done(hb, t), weekVal, weekDays, monthVal, rate7: rate(hb, 7), rate30: rate(hb, 30), streak: st.cur, best: st.best, unit2: st.unit,
+        exercise: hb === exHabit(), seed: hb.id.startsWith('seed-') ? hb.id.slice(5) : null };
+    });
+  }
+  window.Habits = { syncReady: ready, syncExport, syncAdopt, setExternal, summary, el: () => root, unlock, lock, _flush: () => saving, dueOn, weekStats, names, notifyOn, discreet, notify };
 })();

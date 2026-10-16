@@ -1,7 +1,7 @@
 /* Daily Notes – offline cache. Network-first for everything (so new publishes show up immediately),
    falling back to the last cached copy when offline. Only static files + the ENCRYPTED notes.enc.json are cached. */
-const CACHE = 'dn-shell-v7';
-const SHELL = ['./', 'index.html', 'styles.css', 'config.js', 'crypto.js', 'habits.js', 'edits-core.js', 'features.js', 'sync.js', 'app.js', 'manifest.webmanifest', 'notes.enc.json'];
+const CACHE = 'dn-shell-v8';
+const SHELL = ['./', 'index.html', 'styles.css', 'config.js', 'crypto.js', 'habits.js', 'edits-core.js', 'features.js', 'progress.js', 'sync.js', 'app.js', 'manifest.webmanifest', 'notes.enc.json'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
