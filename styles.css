@@ -473,3 +473,30 @@ button.tiny.ghost{background:rgba(255,255,255,.85);color:var(--ink);border:1px s
 .sync-chip[data-state="offline"],.sync-chip[data-state="nopass"]{color:#8a5d00;background:#fff3c9}
 .sync-chip[data-state="unclaimed"],.sync-chip[data-state="auth"]{color:#5a3fa0;background:#ece6ff}
 .sync-chip[data-state="error"],.sync-chip[data-state="locked"]{color:#a3271f;background:#ffe1dc}
+/* links */
+.lk-bar{display:flex;gap:.4rem;align-items:center;margin-bottom:.6rem}
+.lk-q{flex:1 1 auto;min-width:0;font:inherit;padding:.65rem .9rem;border-radius:14px;border:1px solid rgba(0,0,0,.15);background:#fff}
+.lk-bar #lk-add{flex:none;padding:.55rem .9rem}
+.lk-groups{display:grid;gap:.7rem}
+@media (min-width:900px){.lk-groups{grid-template-columns:1fr 1fr;align-items:start}}
+.lk-group{background:rgba(255,255,255,.45);border-radius:14px;padding:.5rem .6rem}
+.lk-cat{margin:.1rem 0 .4rem;font-size:.9rem;color:#1d6b45}
+.lk-list{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}
+.lk-row{display:flex;gap:.5rem;align-items:center;background:rgba(255,255,255,.8);border-radius:12px;padding:.5rem .55rem}
+.lk-row.local{outline:1px dashed #e85584}
+.lk-main{flex:1 1 auto;min-width:0;display:grid;gap:.05rem}
+.lk-title{overflow-wrap:anywhere}
+.lk-main .chip.local{justify-self:start;margin:0}
+.lk-note{font-size:.85rem;color:var(--ink);opacity:.85;overflow-wrap:anywhere}
+.lk-host{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lk-acts{flex:none;display:flex;gap:.3rem;align-items:center}
+.lk-open{display:inline-block;background:var(--ink);color:#fff;text-decoration:none;font-weight:600;font-size:.82rem;border-radius:999px;padding:.45rem .8rem;white-space:nowrap}
+.lk-open:focus-visible,.lk-acts button:focus-visible{outline:2px solid #1d6b45;outline-offset:2px}
+.lk-form{display:grid;gap:.45rem;background:rgba(255,255,255,.7);border-radius:14px;padding:.6rem .7rem;margin-bottom:.7rem}
+.lk-form .m-h{margin:0}
+.lk-f{display:grid;gap:.15rem;font-size:.8rem;font-weight:600;color:var(--muted)}
+.lk-in{font:inherit;font-size:.95rem;font-weight:400;color:var(--ink);padding:.55rem .7rem;border-radius:12px;border:1px solid rgba(0,0,0,.15);background:#fff;min-width:0;width:100%}
+.lk-err{margin:0;color:#a3271f;font-size:.85rem;min-height:1em}
+.lk-err:empty{display:none}
+.lk-del{margin-left:auto;color:#a3271f!important}
+@media (max-width:420px){.sn-btn{min-width:3rem;padding:.3rem .3rem}}

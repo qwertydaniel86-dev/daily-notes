@@ -669,7 +669,7 @@
 
   const KNOWN = new Set(['updated', 'verse', 'today', 'schedule', 'todo', 'todos', 'taskings', 'tasks', 'duty_log', 'duty', 'wd1', 'studies', 'mmpa', 'mmpa_exam_date', 'mpat_log', 'mpat', 'ideas', 'reminders', 'habits', 'version', 'schema',
     'bills', 'bills_summary', 'bills_outlook', 'subscriptions', 'decisions', 'automations', 'finance_tips', 'income', 'balances', 'debts',
-    'wins', 'weekly_review', 'goals', 'health', 'quick_notes']);
+    'wins', 'weekly_review', 'goals', 'health', 'quick_notes', 'links']);
   function extraCards(d) {
     // Unknown top-level sections are shown generically so nothing the writer adds is silently lost.
     // Id-like keys are hidden here too (token match, so words like "ideas"/"video" are not caught): tin, gsis, pag-ibig, philhealth, id, account, number.
@@ -696,7 +696,7 @@
     const tag = (sec, id) => (el) => { if (el) { if (id && !el.id) el.id = id; el.dataset.sec = sec; } return el; };
     const money = (list, secOf) => list.map(([k, fn]) => { let c; try { c = fn(d); c.id = 'm-' + k; } catch (e) { console.error(e); c = card('mist', '⚠️', k.replace(/_/g, ' '), empty('Could not render this section.')); }
       c.dataset.sec = secOf ? secOf(k) : 'money'; return c; });
-    const fx = F ? F.cards(d) : { todayTop: [], todayMid: [], week: [], goals: [], health: [], search: [] };
+    const fx = F ? F.cards(d) : { todayTop: [], todayMid: [], week: [], goals: [], health: [], links: [], search: [] };
     const habitsCard = window.Habits ? window.Habits.el() : null;
     const T = (fn, id) => tag('today', id)(safe(fn)), G = (fn, id) => tag('goals', id)(safe(fn));
     board.replaceChildren(...[
@@ -705,7 +705,7 @@
       ...fx.week.map(tag('week')),
       ...money(moneyCards(d)), ...money(moneyCardsLate(d), (k) => (k === 'automations' ? 'today' : 'money')),
       ...fx.goals.map(tag('goals')), G(wd1Card, 'c-wd1'), G(studiesCard, 'c-studies'), G(mpatCard, 'c-mpat'),
-      ...fx.health.map(tag('health')), ...fx.search.map(tag('search')),
+      ...fx.health.map(tag('health')), ...(fx.links || []).map(tag('links')), ...fx.search.map(tag('search')),
       ...safe(extraCards).map(tag('today'))].filter(Boolean));
     updateStudyBar();
     $('updated').textContent = str(d.updated) ? '⟳ ' + fmtUpdated(str(d.updated)) : '';

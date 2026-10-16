@@ -1,7 +1,8 @@
 /* Daily Notes – edits core (shared by the browser overlay and tools/apply-edits.mjs). No data lives here.
    An edit: { eid, sec, op, key, label, val, at }
-     sec: todo | taskings | bills | reminders | quick_notes | health.sleep | health.weight
+     sec: todo | taskings | bills | reminders | quick_notes | health.sleep | health.weight | links
      op : done (todo, val true/false) · status (taskings 'Open'|'In progress'|'Done'; bills 'paid') · add (val = new item, with id) · log (val {date, hours|kg})
+          links only: add (val {id, title, url, category, note}) · set (val = the new {title, url, category, note}) · del (val null)
      key: "id:<item.id>" when the item has an id, else "h:<hash of section|text>" (see keyOf).
    A sync state (Sheet blob / pull-edits): { dn_edits:1, device, exported, edits:[…], tomb:{eid: iso} } – see mergeSync. */
 (function (root) {
@@ -10,7 +11,22 @@
   const pick = (o, ...ks) => { if (o && typeof o === 'object') for (const k of ks) { const s = str(o[k]); if (s) return s; } return ''; };
   const norm = (s) => str(s).toLowerCase().replace(/\s+/g, ' ');
   function hid(s) { let x = 5381; for (let i = 0; i < s.length; i++) x = ((x << 5) + x + s.charCodeAt(i)) >>> 0; return x.toString(36); }
-  const SECS = ['todo', 'taskings', 'bills', 'reminders', 'quick_notes', 'health.sleep', 'health.weight'];
+  const SECS = ['todo', 'taskings', 'bills', 'reminders', 'quick_notes', 'health.sleep', 'health.weight', 'links'];
+  const OPS = ['done', 'status', 'add', 'log', 'set', 'del'];
+  const LINK_FIELDS = ['title', 'url', 'category', 'note'];
+  // Only plain http(s) links are ever stored, applied or rendered (no javascript:, data:, mailto: …).
+  function safeUrl(u) {
+    const s = str(u);
+    if (!s || s.length > 2000 || /\s/.test(s) || !/^https?:\/\/[^\/?#\s]+/i.test(s)) return '';
+    try { const x = new URL(s); return x.protocol === 'http:' || x.protocol === 'https:' ? s : ''; } catch { return /^https?:\/\/[\w.-]+(:\d+)?([\/?#]|$)/i.test(s) ? s : ''; }
+  }
+  // Normalised link fields for an edit value (title required, url must be http(s)); null when invalid.
+  function linkVal(v) {
+    if (!v || typeof v !== 'object') return null;
+    const o = { title: str(v.title || v.name).slice(0, 120), url: safeUrl(v.url || v.href), category: str(v.category).slice(0, 60) || 'Other', note: str(v.note).slice(0, 300) };
+    return o.title && o.url ? o : null;
+  }
+  const sameLink = (it, v) => !!(it && typeof it === 'object' && v && LINK_FIELDS.every((f) => (f === 'category' ? (str(it[f]) || 'Other') === v[f] : str(f === 'title' ? it.title || it.name : f === 'url' ? it.url || it.href : it[f]) === v[f])));
   // Human text of an item, per section (what the hash is built from when there is no id).
   function textOf(sec, it) {
     if (typeof it === 'string') return it.trim();
@@ -18,6 +34,7 @@
     if (sec === 'bills') return [pick(it, 'name', 'title', 'item'), str(it.due ?? it.due_date ?? it.date)].filter(Boolean).join(' | ');
     if (sec === 'taskings') return pick(it, 'task', 'title', 'item');
     if (sec === 'quick_notes') return pick(it, 'text', 'note', 'item');
+    if (sec === 'links') return [pick(it, 'title', 'name'), pick(it, 'url', 'href')].filter(Boolean).join(' | ');
     return pick(it, 'item', 'task', 'text', 'title');
   }
   const hashKey = (sec, it) => 'h:' + hid(sec + '|' + norm(textOf(sec, it)));
@@ -39,6 +56,14 @@
   // Does notes.json already show this edit's result?
   function isReflected(notes, e) {
     if (!notes || typeof notes !== 'object' || !e) return false;
+    if (e.sec === 'links' && e.op !== 'add') {
+      const xs = listOf(notes, 'links');
+      if (e.op === 'del') return findIndex(notes, e) < 0;
+      const v = linkVal(e.val); if (!v) return false;
+      const i = findIndex(notes, e);
+      // reflected when the item now holds the new values (or, for items without an id, a link with exactly those values exists)
+      return i >= 0 ? sameLink(xs[i], v) : xs.some((x) => sameLink(x, v));
+    }
     if (e.op === 'add') {
       const xs = listOf(notes, e.sec), v = e.val || {};
       return xs.some((x) => (x && typeof x === 'object' && v.id && str(x.id) === v.id) || (norm(textOf(e.sec, x)) && norm(textOf(e.sec, x)) === norm(textOf(e.sec, v))));
@@ -71,6 +96,17 @@
       if (!e || !SECS.includes(e.sec)) continue;
       if (isReflected(out, e)) { res.reflected.push(e); continue; }
       const xs = ensure(e.sec);
+      if (e.sec === 'links') {
+        if (e.op === 'add') { const v = linkVal(e.val); if (!v) { res.missing.push(e); continue; } const it = Object.assign(str(e.val.id) ? { id: str(e.val.id) } : {}, v); if (!it.note) delete it.note; if (mark) it._local = 'added'; xs.push(it); res.applied.push(e); continue; }
+        const i = findIndex(out, e);
+        if (i < 0) { res.missing.push(e); continue; }
+        if (e.op === 'del') { xs.splice(i, 1); res.applied.push(e); continue; }
+        const v = linkVal(e.val); if (!v) { res.missing.push(e); continue; }
+        const it = xs[i] = Object.assign({}, typeof xs[i] === 'object' && xs[i] ? xs[i] : {}, v);
+        delete it.name; delete it.href; if (!it.note) delete it.note;
+        if (mark) { it._local = 'edited'; it._lkey = e.key; }
+        res.applied.push(e); continue;
+      }
       if (e.op === 'add') { const v = clone(e.val || {}); if (mark) v._local = 'added'; xs.push(v); res.applied.push(e); continue; }
       if (e.op === 'log') {
         const v = clone(e.val || {}), j = xs.findIndex((x) => x && str(x.date).slice(0, 10) === v.date);
@@ -104,6 +140,9 @@
       case 'quick_notes:add': return `Quick note: ${q(v.text)}`;
       case 'health.sleep:log': return `Sleep logged: ${v.date} · ${v.hours} h`;
       case 'health.weight:log': return `Weight logged: ${v.date} · ${v.kg} kg`;
+      case 'links:add': return `New link: ${q(v.title)}${v.category ? ` [${str(v.category)}]` : ''} → ${str(v.url)}`;
+      case 'links:set': return `Link edited: ${q(e.label)} → ${q(v.title)}${v.category ? ` [${str(v.category)}]` : ''} ${str(v.url)}`;
+      case 'links:del': return `Link deleted: ${q(e.label)}`;
       default: return `${e.sec} ${e.op}: ${q(e.label)}`;
     }
   }
@@ -128,8 +167,12 @@
     const ts = Object.entries((x && x.tomb) || {}).map(([k, v]) => k + '@' + v).sort();
     return JSON.stringify([es, ts]);
   }
-  function validEdit(e) { return !!(e && typeof e === 'object' && SECS.includes(e.sec) && ['done', 'status', 'add', 'log'].includes(e.op) && str(e.eid)); }
-  const api = { mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit, SECS, KIND: 'dn-edits-v1', OVERLAY_KIND: 'dn-overlay-v1' };
+  function validEdit(e) {
+    if (!(e && typeof e === 'object' && SECS.includes(e.sec) && OPS.includes(e.op) && str(e.eid))) return false;
+    if (e.sec === 'links') return e.op === 'del' ? !!str(e.key) : (e.op === 'add' || e.op === 'set') && !!linkVal(e.val) && (e.op === 'add' || !!str(e.key));
+    return !['set', 'del'].includes(e.op);
+  }
+  const api = { safeUrl, linkVal, mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit, SECS, KIND: 'dn-edits-v1', OVERLAY_KIND: 'dn-overlay-v1' };
   root.EditsCore = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

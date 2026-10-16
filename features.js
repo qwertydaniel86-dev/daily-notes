@@ -70,7 +70,7 @@
     syncSig = curSig();
     prune(); save(); startTicker();
   }
-  function lock() { key = null; O = null; merged = {}; raw = {}; searchIndex = []; stopTicker(); }
+  function lock() { lkEdit = null; lkQuery = ''; key = null; O = null; merged = {}; raw = {}; searchIndex = []; stopTicker(); }
   const ready = () => !!(O && key);
   const pending = () => (O ? O.edits.length : 0);
 
@@ -340,11 +340,116 @@
     return card('lilac', '🗒️', 'Quick notes', h('ul', { class: 'bullets' }, xs.slice().reverse().map((x) => h('li', null, pick(x, 'text', 'note', 'item'), isoOf(x.date) ? h('span', { class: 'muted small' }, ' · ' + fmtD(isoOf(x.date))) : null, localChip(x)))), { badge: xs.length });
   }
 
+  /* ================= Links (notes.json `links` + phone edits via the Outbox) ================= */
+  let lkQuery = '', lkEdit = null, lkErr = '';           // lkEdit: null | 'new' | { key, it }
+  const lkKey = (it) => (it && it._lkey) || C.keyOf('links', it);
+  const lkHost = (u) => { try { return new URL(u).host.replace(/^www\./, ''); } catch { return ''; } };
+  const lkShow = (u) => { try { const x = new URL(u), p = x.pathname.replace(/\/+$/, ''); return lkHost(u) + (p && p.length <= 30 ? p : p ? '/…' : ''); } catch { return ''; } };
+  // Phone input: add https:// when no scheme was typed ("example.com"); anything that is not http(s) is refused.
+  function lkUrlIn(s) { s = str(s).trim(); if (s && !/^[a-z][a-z0-9+.-]*:/i.test(s) && /^[\w-]+(\.[\w-]+)+([\/?#:].*)?$/.test(s)) s = 'https://' + s; return C.safeUrl(s); }
+  const rawLinks = () => D().objs(raw.links, 'title');
+  function rawLinkByKey(k) { const i = C.findIndex(raw, { sec: 'links', key: k }); return i >= 0 ? D().arr(raw.links)[i] : null; }
+  const pendingAdd = (it) => (it && it._local === 'added' && it.id ? O.edits.find((e) => e.sec === 'links' && e.op === 'add' && e.val && e.val.id === it.id) : null);
+  function saveLink(target, v) {
+    if (!ready()) return false;
+    const at = new Date().toISOString();
+    if (target === 'new') {
+      const id = 'loc-' + rand(4);
+      upsert({ eid: 'add:' + id, sec: 'links', op: 'add', key: 'id:' + id, label: v.title, val: Object.assign({ id }, v), at });
+      return true;
+    }
+    const pa = pendingAdd(target.it);
+    if (pa) { upsert(Object.assign({}, pa, { label: v.title, val: Object.assign({ id: pa.val.id }, v), at })); return true; }
+    const k = target.key, r = rawLinkByKey(k), prev = O.edits.find((e) => e.eid === `links:set:${k}`);
+    upsert({ eid: `links:set:${k}`, sec: 'links', op: 'set', key: k, label: prev ? prev.label : D().pick(r || target.it, 'title', 'name'), labelText: prev ? prev.labelText : C.textOf('links', r || target.it), val: v, at });
+    return true;
+  }
+  function deleteLink(target) {
+    if (!ready()) return;
+    const pa = pendingAdd(target.it);
+    if (pa) { drop((e) => e.eid === pa.eid); save(); D().rerender(); return; }
+    const k = target.key, r = rawLinkByKey(k), prev = O.edits.find((e) => e.eid === `links:set:${k}`);
+    drop((e) => e.eid === `links:set:${k}`);
+    upsert({ eid: `links:del:${k}`, sec: 'links', op: 'del', key: k, label: prev ? prev.label : D().pick(r || target.it, 'title', 'name'), labelText: prev ? prev.labelText : C.textOf('links', r || target.it), val: null, at: new Date().toISOString() });
+  }
+  function linkForm(cats) {
+    const { h } = D();
+    const it = lkEdit && lkEdit !== 'new' ? lkEdit.it : {};
+    const f = (id, label, attrs) => h('label', { class: 'lk-f', for: id }, h('span', null, label), h('input', Object.assign({ id, class: 'lk-in', autocomplete: 'off' }, attrs)));
+    const dl = h('datalist', { id: 'lk-cats' }, cats.map((c) => h('option', { value: c })));
+    const err = h('p', { class: 'lk-err', role: 'alert', id: 'lk-err' }, lkErr);
+    const form = h('form', { class: 'lk-form', id: 'lk-form', novalidate: true, onsubmit: (e) => {
+      e.preventDefault();
+      const g = (id) => form.querySelector('#' + id).value;
+      const title = g('lk-title').trim(), url = lkUrlIn(g('lk-url')), category = g('lk-cat').trim() || 'Other', note = g('lk-note').trim();
+      const show = (m) => { err.textContent = m; };
+      if (!title) return show('Give the link a title.');
+      if (!url) return show('The URL must start with http:// or https:// (e.g. https://example.com).');
+      const v = C.linkVal({ title, url, category, note });
+      if (!v) return show('That link could not be saved.');
+      const isNew = lkEdit === 'new'; lkErr = '';
+      lkEdit = null;
+      if (!saveLink(isNew ? 'new' : { key: lkKey(it), it }, v)) return;
+      toast(isNew ? '🔗 Link added – syncing via the Outbox' : '✎ Link updated – syncing via the Outbox');
+    } },
+      h('p', { class: 'm-h' }, lkEdit === 'new' ? '➕ New link' : '✎ Edit link'),
+      f('lk-title', 'Title', { type: 'text', maxlength: '120', value: D().pick(it, 'title', 'name'), required: true }),
+      f('lk-url', 'URL', { type: 'url', inputmode: 'url', maxlength: '2000', placeholder: 'https://…', value: D().pick(it, 'url', 'href'), required: true }),
+      f('lk-cat', 'Category', { type: 'text', maxlength: '60', list: 'lk-cats', placeholder: 'e.g. My Apps', value: D().pick(it, 'category') }), dl,
+      f('lk-note', 'Note (optional)', { type: 'text', maxlength: '300', value: D().pick(it, 'note') }),
+      err,
+      h('div', { class: 'row-btns' }, h('button', { type: 'submit', class: 'qc-add', id: 'lk-save' }, 'Save'),
+        h('button', { type: 'button', class: 'tiny ghost', onclick: () => { lkEdit = null; lkErr = ''; D().rerender(); } }, 'Cancel'),
+        lkEdit !== 'new' ? h('button', { type: 'button', class: 'tiny ghost lk-del', id: 'lk-delete', onclick: () => {
+          if (!confirm(`Delete “${D().pick(it, 'title')}”?`)) return;
+          const t = { key: lkKey(it), it }; lkEdit = null; deleteLink(t); toast('🗑️ Link deleted – undo by discarding it in the Outbox');
+        } }, '🗑️ Delete') : null));
+    setTimeout(() => { const t = document.getElementById('lk-title'); if (t && document.activeElement !== t) { t.focus({ preventScroll: true }); form.scrollIntoView({ block: 'nearest' }); } }, 0);
+    return form;
+  }
+  function filterLinks(root, q) {
+    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0;
+    root.querySelectorAll('.lk-group').forEach((g) => {
+      let n = 0;
+      g.querySelectorAll('.lk-row').forEach((r) => { const ok = terms.every((w) => r.dataset.q.includes(w)); r.hidden = !ok; if (ok) n++; });
+      g.hidden = !n; shown += n;
+    });
+    const none = root.querySelector('.lk-none'); if (none) { none.hidden = shown > 0 || !terms.length; none.textContent = `No links match “${q}”.`; }
+  }
+  function linksCard(d) {
+    const { h, card, objs, pick, empty } = D();
+    const xs = objs(d.links, 'title').map((it) => ({ it, title: pick(it, 'title', 'name'), url: C.safeUrl(pick(it, 'url', 'href')), cat: pick(it, 'category') || 'Other', note: pick(it, 'note') })).filter((x) => x.title || x.url);
+    const cats = []; xs.forEach((x) => { if (!cats.includes(x.cat)) cats.push(x.cat); });
+    const canEdit = ready();
+    const groups = cats.map((c) => {
+      const rows = xs.filter((x) => x.cat === c);
+      return h('section', { class: 'lk-group' }, h('h3', { class: 'lk-cat' }, c, h('span', { class: 'muted small' }, ' · ' + rows.length)),
+        h('ul', { class: 'lk-list' }, rows.map((x) => h('li', { class: 'lk-row' + (x.it._local ? ' local' : ''), 'data-q': [x.title, x.note, x.cat, lkHost(x.url)].join(' ').toLowerCase() },
+          h('div', { class: 'lk-main' }, h('strong', { class: 'lk-title' }, x.title || lkHost(x.url)), localChip(x.it),
+            x.note ? h('span', { class: 'lk-note' }, x.note) : null,
+            h('span', { class: 'lk-host muted small', title: x.url || null }, x.url ? lkShow(x.url) : '⚠️ not an http(s) link – edit it')),
+          h('div', { class: 'lk-acts' },
+            x.url ? h('a', { class: 'lk-open', href: x.url, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Open ' + x.title }, 'Open ↗') : null,
+            x.url ? h('button', { type: 'button', class: 'icon lk-copy', title: 'Copy link', 'aria-label': 'Copy link: ' + x.title, onclick: async () => { const ok = await copyText(x.url); toast(ok ? '📋 Link copied' : 'Copy blocked by the browser'); } }, '📋') : null,
+            canEdit ? h('button', { type: 'button', class: 'icon lk-edit', title: 'Edit', 'aria-label': 'Edit link: ' + x.title, onclick: () => { lkEdit = { key: lkKey(x.it), it: x.it }; lkErr = ''; D().rerender(); } }, '✎') : null)))));
+    });
+    const q = h('input', { type: 'search', id: 'lk-q', class: 'lk-q', placeholder: 'Filter links…', 'aria-label': 'Filter links', autocomplete: 'off', value: lkQuery,
+      oninput: (e) => { lkQuery = e.target.value; filterLinks(box, lkQuery); } });
+    const box = h('div', { class: 'lk-groups' }, groups, h('p', { class: 'empty lk-none', hidden: true }));
+    if (lkQuery) setTimeout(() => filterLinks(box, lkQuery), 0);
+    const addBtn = canEdit && !lkEdit ? h('button', { type: 'button', class: 'tiny', id: 'lk-add', onclick: () => { lkEdit = 'new'; lkErr = ''; D().rerender(); } }, '＋ Add link') : null;
+    const body = [h('div', { class: 'lk-bar' }, q, addBtn), lkEdit && canEdit ? linkForm(cats) : null,
+      xs.length ? box : empty('No links yet — tap ＋ Add link.'),
+      h('p', { class: 'small muted' }, 'Links open in a new tab. Adds / edits / deletes are saved encrypted on this device and sync through the Outbox.')];
+    return card('mint', '🔗', 'Links', body, { wide: true, badge: xs.length || null });
+  }
+
   /* ================= Search ================= */
   const KEY_CARD = { today: 'c-schedule', schedule: 'c-schedule', todo: 'c-todo', todos: 'c-todo', taskings: 'c-taskings', tasks: 'c-taskings', reminders: 'c-reminders', duty_log: 'c-duty', duty: 'c-duty',
     wd1: 'c-wd1', studies: 'c-studies', mmpa: 'c-studies', mpat_log: 'c-mpat', mpat: 'c-mpat', ideas: 'c-ideas', verse: 'c-hero', bills: 'm-bills', bills_outlook: 'm-bills', bills_summary: 'm-bills',
     subscriptions: 'm-subscriptions', decisions: 'm-decisions', automations: 'm-automations', finance_tips: 'm-finance_tips', income: 'm-pay', debts: 'm-debts', balances: 'm-freecash',
-    wins: 'c-review', weekly_review: 'c-review', goals: 'c-goals', health: 'c-health', quick_notes: 'c-quick_notes' };
+    wins: 'c-review', weekly_review: 'c-review', goals: 'c-goals', health: 'c-health', quick_notes: 'c-quick_notes', links: 'c-links' };
   const SKIP = new Set(['updated', 'version', 'schema', 'habits']);
   function buildIndex(d) {
     const idTok = D().idTok, out = [];
@@ -368,7 +473,7 @@
   }
   const LABEL = { today: 'Schedule', todo: 'To-do', taskings: 'Taskings', reminders: 'Reminders', duty_log: 'Duty log', wd1: 'WD1', studies: 'Studies', mpat_log: 'MPAT', ideas: 'Ideas', verse: 'Verse',
     bills: 'Bills', bills_outlook: 'Bills', subscriptions: 'Subscriptions', decisions: 'Decisions', automations: 'Automations', finance_tips: 'Strategy', income: 'Pay', debts: 'Debts', balances: 'Cash',
-    wins: 'Wins', weekly_review: 'Review', goals: 'Goals', health: 'Health', quick_notes: 'Quick notes', habits: 'Habits' };
+    wins: 'Wins', weekly_review: 'Review', goals: 'Goals', health: 'Health', quick_notes: 'Quick notes', habits: 'Habits', links: 'Links' };
   function marked(text, terms) {
     const { h } = D(), frag = document.createDocumentFragment();
     if (!terms.length) { frag.append(text); return frag; }
@@ -419,7 +524,7 @@
   }
 
   /* ================= section nav ================= */
-  const SECTIONS = [['today', '🏠', 'Today'], ['week', '🗓️', 'Week'], ['money', '💰', 'Money'], ['goals', '🎯', 'Goals'], ['health', '💪', 'Health'], ['search', '🔍', 'Search']];
+  const SECTIONS = [['today', '🏠', 'Today'], ['week', '🗓️', 'Week'], ['money', '💰', 'Money'], ['goals', '🎯', 'Goals'], ['health', '💪', 'Health'], ['links', '🔗', 'Links'], ['search', '🔍', 'Search']];
   function navEl() {
     const nav = document.getElementById('secnav');
     if (!nav) return null;
@@ -463,6 +568,7 @@
       week: [safe(weekCard, 'c-week'), safe(reviewCard, 'c-review')],
       goals: [d.goals != null ? safe(goalsCard, 'c-goals') : null],
       health: [safe(healthCard, 'c-health')],
+      links: [safe(linksCard, 'c-links')],
       search: [safe(searchCard, 'c-search')],
     };
   }
@@ -506,5 +612,5 @@
     if (changed) D().rerender();
     return changed;
   }
-  window.Features = { syncPayload, syncApply, unlock, lock, ready, merge, cards, afterRender, set, undo, add, logHealth, localChip, pending, go, _flush: () => saving, _tick: tickPings };
+  window.Features = { syncPayload, syncApply, unlock, lock, ready, merge, cards, afterRender, set, undo, add, logHealth, saveLink, deleteLink, localChip, pending, go, _flush: () => saving, _tick: tickPings };
 })();
