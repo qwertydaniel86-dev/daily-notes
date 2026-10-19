@@ -1,7 +1,7 @@
 /* Daily Notes – edits core (shared by the browser overlay and tools/apply-edits.mjs). No data lives here.
    An edit: { eid, sec, op, key, label, labelText, val, at }
      sec / op (see OPS_BY):
-       todo done|add · taskings status · bills status · reminders add · quick_notes add · health.sleep|health.weight log
+       todo done|add · taskings status · bills status · reminders add|done · quick_notes add · health.sleep|health.weight log
        health.exercise add (val {id, date, type, minutes}) · mpat_log add (val {id, date, area, score, time, notes})
        studies done (MMPA checklist tick) · progress set (key "wd1.<field>" | "finance.savingsTotal", val number|null)
        va.daily log (val {date, sent, replies}) · va.leads add|set (val {name, role, status, note})
@@ -223,6 +223,7 @@
     const q = (s) => `“${str(s)}”`, v = e.val || {};
     switch (e.sec + ':' + e.op) {
       case 'todo:done': return `To-do ${e.val ? '✅ done' : '↩︎ not done'}: ${q(e.label)}`;
+      case 'reminders:done': return `Reminder ${e.val ? '✅ done' : '↩︎ not done'}: ${q(e.label)}`;
       case 'taskings:status': return `Tasking → ${e.val}: ${q(e.label)}`;
       case 'bills:status': return `Bill marked ${e.val}: ${q(e.label)}`;
       case 'todo:add': return `New to-do: ${q(v.item)}${v.due ? ` (due ${v.due})` : ''}`;

@@ -145,8 +145,8 @@
     } }, h('div', { class: 'pg-grid2' }, field('Client / company', name), field('Role / service', role), field('Status', st), field('Note', note)), err,
       h('div', { class: 'row-btns' }, h('button', { type: 'submit', class: 'qc-add', id: 'ld-save' }, it ? 'Save lead' : 'Add lead'), close ? h('button', { type: 'button', class: 'tiny ghost', onclick: close }, 'Cancel') : null));
   }
-  function updateProgressCard(d) {
-    const { h, card, num, fmtNum, peso } = D();
+  function progressPane(d) {
+    const { h, num, fmtNum, peso } = D();
     const f = F(), t = today();
     if (!f) return null;
     legacyStudyTicks(d);
@@ -154,8 +154,8 @@
     // VA outreach (today)
     const vd = vaDaily(d), td = vd[t] || { sent: 0, replies: 0 }, ws = weekStart(t);
     let wS = 0, wR = 0; Object.entries(vd).forEach(([k, x]) => { if (k >= ws && k <= t) { wS += x.sent; wR += x.replies; } });
-    const va = sec('💼', 'VA outreach · today', [
-      h('div', { class: 'pg-ctrs' }, counter('Emails sent', td.sent, (n) => f.logVaDaily(t, n, td.replies), 'va-sent'), counter('Replies', td.replies, (n) => f.logVaDaily(t, td.sent, n), 'va-replies')),
+    const va = sec('💼', 'Work applications · today', [
+      h('div', { class: 'pg-ctrs' }, counter('Sent', td.sent, (n) => f.logVaDaily(t, n, td.replies), 'va-sent'), counter('Replies', td.replies, (n) => f.logVaDaily(t, td.sent, n), 'va-replies')),
       h('p', { class: 'small muted' }, `This week: ${wS} sent · ${wR} repl${wR === 1 ? 'y' : 'ies'}${wS ? ` · ${Math.round((wR / wS) * 100)}% reply rate` : ''}`)]);
     // leads
     const leads = leadsOf(d), active = leads.filter((x) => x.v.status !== 'Lost');
@@ -206,7 +206,19 @@
       f.setProgress('finance.savingsTotal', v == null ? null : Math.round(v * 100) / 100); toast(v == null ? 'Savings total cleared' : '💰 Savings total saved – syncing via the Outbox');
     } }, h('div', { class: 'qc-row' }, sIn, h('button', { type: 'submit', class: 'qc-add', id: 'sv-save' }, 'Save')),
       h('p', { class: 'small muted' }, sv.cur != null ? `Now ${peso(sv.cur)}${sv.asOf ? ' · as of ' + fmtD(sv.asOf) : ''} (${sv.src})` : 'Current savings not set yet. All accounts combined; account names only, never numbers.')));
-    return card('lilac', '📈', 'Update progress', h('div', { class: 'pg-secs' }, va, leadSec, mmSec, wdSec, mpSec, svSec), { wide: true, sub: 'Feeds the Goals tab · saved encrypted on this device · syncs via the Outbox' });
+    return h('div', { class: 'pg-secs', id: 'c-progress' }, va, leadSec, mmSec, wdSec, mpSec, svSec);
+  }
+  /* ================= Today: one "Update" card – 💸 Money · 💪 Health · 📈 Progress (one pane at a time) ================= */
+  let upPane = 'money';
+  function updateCard(d) {
+    const { h, card } = D();
+    const f = F();
+    if (!f) return null;
+    const panes = { money: logMoneyPane(d), health: f.healthLogForm ? h('div', { id: 'c-healthlog' }, f.healthLogForm()) : null, progress: progressPane(d) };
+    const show = (v) => { upPane = v; Object.entries(panes).forEach(([k, el]) => { if (el) el.hidden = k !== v; }); };
+    const segEl = seg([['money', '💸 Money'], ['health', '💪 Health'], ['progress', '📈 Progress']].filter(([k]) => panes[k]), upPane, show, 'What to update', 'up-t');
+    show(panes[upPane] ? upPane : 'money');
+    return card('lilac', '📝', 'Update', [segEl, Object.values(panes)], { wide: true, sub: 'Money · health · progress → feeds Money & Goals · syncs via the Outbox' });
   }
 
   /* ================= Money: transaction form (Today quick entry + edit sheet) ================= */
@@ -260,13 +272,11 @@
       h('span', { class: 'tx-amt m-num' }, (isOut(v.type) ? '−' : '+') + peso(v.amount)),
       canEdit ? h('button', { type: 'button', class: 'icon tx-edit', 'aria-label': 'Edit entry', onclick: () => editTx(d, x.it) }, '✎') : null);
   }
-  function logMoneyCard(d) {
-    const { h, card, peso } = D();
-    if (!F()) return null;
-    const t = today(), list = txList(d), fl = flows(list.filter((x) => x.v.date === t));
-    return card('mint', '💸', 'Log money', [txForm(d, null, null, 'tx'),
-      list.length ? h('ul', { class: 'tx-list' }, list.slice(0, 3).map((x) => txRow(d, x, true))) : null,
-      h('p', { class: 'small muted' }, `Today: −${peso(fl.out)} out · +${peso(fl.in)} in · full list in 💰 Money`)], { sub: 'Account names only · syncs via the Outbox' });
+  function logMoneyPane(d) {
+    const { h, peso } = D();
+    const t = today(), fl = flows(txList(d).filter((x) => x.v.date === t));
+    return h('div', { id: 'c-logmoney' }, txForm(d, null, null, 'tx'),
+      h('p', { class: 'small muted' }, `Today: −${peso(fl.out)} out · +${peso(fl.in)} in · full list on 💰 Money`));
   }
   function moneyLogCard(d) {
     const { h, card, peso, empty } = D();
@@ -283,7 +293,7 @@
       catEl ? [h('p', { class: 'm-h' }, '🧾 Spending by category'), catEl] : null,
       acctEl ? [h('p', { class: 'm-h' }, '🏦 Per account'), acctEl] : null,
       h('div', { class: 'row-btns' }, h('p', { class: 'm-h' }, '🕒 Recent'), canEdit ? h('button', { type: 'button', class: 'tiny', id: 'txm-add', onclick: () => { const cl = sheet('💸 Log money', txForm(d, null, () => cl(), 'txn'), 'tx-sheet'); } }, '＋ Log money') : null),
-      list.length ? h('ul', { class: 'tx-list' }, list.slice(0, 25).map((x) => txRow(d, x, canEdit))) : empty('No money logged yet — use 💸 Log money on Today.'),
+      list.length ? h('ul', { class: 'tx-list' }, list.slice(0, 25).map((x) => txRow(d, x, canEdit))) : empty('No money logged yet — use 📝 Update → Money on Today.'),
       list.length > 25 ? h('p', { class: 'small muted' }, `${list.length - 25} older entries not shown`) : null,
       h('p', { class: 'small muted' }, 'From your own log (and Denx’s receipts) – not a bank statement. Account names only.')];
     return card('aqua', '📒', 'Money log', body, { wide: true, badge: mon.length ? `${mon.length} this month` : null, sub: 'Money · expenses, bills, transfers and income you logged' });
@@ -319,11 +329,10 @@
     const habLine = (x) => x ? `${x.emoji} ${x.name}: ${x.weekly ? `${x.weekDays}/${x.weekly} this week` : `${x.type === 'check' ? '' : `${x.today}/${x.target} today · `}${Math.round((x.rate30 ?? 0) * 100)}% of days (30d)`}` : null;
     if (metric === 'wd1') {
       const rs = wd1Rows(d), set = rs.filter((r) => r.pct != null);
-      if (set.length) { p = Math.round(set.reduce((a, r) => a + r.pct, 0) / set.length); lines.push(`${set.length}/${rs.length} criteria tracked: ` + set.map((r) => `${r.label} ${r.pct}%`).join(' · ')); }
-      const unset = rs.filter((r) => r.pct == null).map((r) => r.label); if (unset.length && set.length) lines.push('Not set yet: ' + unset.join(', '));
+      if (set.length) p = Math.round(set.reduce((a, r) => a + r.pct, 0) / set.length); // per-criterion detail: wd1Block
     } else if (metric === 'studies') {
       const st = studies(d), n = st.items.filter((x) => x.done).length;
-      if (st.items.length) { p = pct(n, st.items.length); lines.push(`📚 ${n}/${st.items.length} subjects reviewed`); }
+      if (st.items.length) p = pct(n, st.items.length); // subject list: studiesBlock
       const sm = hab('mmpa', /mmpa|study/i); if (sm && (sm.monthVal || sm.weekVal)) lines.push(`${sm.emoji} ${sm.name}: ${sm.weekVal} ${sm.unit || ''} this week · ${Math.round((sm.rate30 ?? 0) * 100)}% of days (30d)`.replace(/\s+·/, ' ·'));
     } else if (metric === 'mpat') {
       const x = hab('mpat', /\bmpat\b/i), logs = D().arr(d.mpat_log ?? d.mpat).length;
@@ -337,7 +346,7 @@
     } else if (metric === 'va') {
       const s = vaStats(d, t); const rank = { Interested: 25, Interview: 50, Offer: 75, Hired: 100 };
       const best = Math.max(0, ...leadsOf(d).map((x) => rank[x.v.status] || 0));
-      if (s.all.sent || best) { p = best; lines.push(`📧 ${s.all.sent} sent · ${s.all.replies} replies${s.all.sent ? ` · ${Math.round((s.all.replies / s.all.sent) * 100)}%` : ''}`); }
+      if (s.all.sent || best) p = best; // totals table: vaBlock
     } else if (metric === 'savings') {
       const sv = savingsOf(d), m = savingsMath(sv.cur, D().num(g.target) ?? sv.target, isoOf(g.target_date) || sv.due, t);
       if (m && m.cur != null) { p = m.pct; lines.push(`${D().peso(m.cur)} of ${D().peso(m.target)}`); }
@@ -354,46 +363,107 @@
     return xs.length ? { avg: xs.reduce((a, x) => a + x.v, 0) / xs.length, n: xs.length } : null;
   }
   const AREA_COLORS = ['sky', 'mint', 'lav', 'peach', 'rose', 'lemon', 'aqua', 'lilac', 'coral'];
-  function goalsCard(d) {
-    const { h, card, pick, objs, dueInfo, empty, hid } = D();
-    const gs = objs(d.goals, 'title'), t = today(), hs = habits();
-    if (!gs.length) return card('peach', '🎯', 'Goals', empty('No goals yet — Denx adds them to notes.json (see README).'));
-    const list = h('div', { class: 'gl-list' }, gs.map((g) => {
-      const r = computeGoal(d, g, hs, t), area = pick(g, 'area', 'category');
-      const di = dueInfo(g.target_date, r.p === 100);
-      return h('div', { class: 'gl' },
-        h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, pick(g, 'title', 'name') || '(goal)'), area ? h('span', { class: `chip area c-${AREA_COLORS[parseInt(hid(area.toLowerCase()), 36) % AREA_COLORS.length]}` }, area) : null),
-        h('div', { class: 'meter' }, bar(r.p, pick(g, 'title')),
-          h('div', { class: 'meter-foot small muted' }, r.p == null ? 'no data yet' : `${r.p}%${r.src === 'notes' ? ' · from notes' : r.src === 'milestones' ? ' · milestones' : ''}`, di ? h('span', { class: `chip ${di.cls}` }, '🏁 ', di.label) : null)),
-        r.lines.length ? h('ul', { class: 'gl-why small' }, r.lines.map((x) => h('li', null, x))) : null,
-        pick(g, 'next_step', 'next') ? h('p', { class: 'gl-next' }, '👉 ', pick(g, 'next_step', 'next')) : null,
-        r.ms.length ? h('ul', { class: 'gl-mlist' }, r.ms.map((m) => h('li', { class: m.done ? 'done' : '' }, m.done ? '✅ ' : '⬜ ', pick(m, 'text', 'title', 'item')))) : null);
-    }));
-    const auto = gs.filter((g) => computeGoal(d, g, hs, t).src === 'auto').length;
-    return card('peach', '🎯', 'Goals', [list, h('p', { class: 'small muted' }, 'Progress is computed from your habits, logs and trackers – update them on 🏠 Today → Update progress.')], { badge: `${auto}/${gs.length} auto`, wide: true });
+  const goalState = (g) => { const s = String(g.status || '').toLowerCase().trim(); return /hold|pause|parked/.test(s) ? 'hold' : /done|complete|achieved|closed/.test(s) ? 'done' : 'active'; };
+  function goalLink(d, g) {
+    const { h, pick, objs } = D();
+    const ref = D().str(g.link); if (!ref) return null;
+    const L = objs(d.links, 'title').find((x) => D().str(x.id) === ref);
+    const url = C.safeUrl(L ? pick(L, 'url', 'href') : ref);
+    return url ? h('a', { class: 'gl-link', href: url, target: '_blank', rel: 'noopener noreferrer' }, '🔗 ', L ? pick(L, 'title', 'name') : 'Open', ' ↗') : null;
   }
-  function savingsCard(d) {
-    const { h, card, peso, empty } = D();
+  function wd1Block(d) {
+    const { h, fmtNum, objs, pick, fmtDate, isoDate } = D();
+    const rs = wd1Rows(d);
+    const duty = objs(d.duty_log ?? d.duty, 'notes').filter((x) => isoDate(x.date) && isoDate(x.date) <= today()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    if (!rs.length && !duty.length) return null;
+    const last = duty[0];
+    return h('div', { class: 'gl-blk', id: 'c-wd1' }, rs.map((r) => h('div', { class: 'gl-crit' + (r.pct === 100 ? ' met' : '') },
+      h('div', { class: 'meter-top' }, h('span', null, r.ico, ' ', r.label, r.local ? h('span', { class: 'chip local' }, '✎') : null),
+        h('span', { class: 'small' }, r.cur == null ? h('span', { class: 'muted' }, `not set / ${fmtNum(r.req)}`) : `${fmtNum(r.cur)} / ${fmtNum(r.req)}${r.unit ? ' ' + r.unit : ''}`, r.pct != null ? ` · ${r.pct >= 100 ? '✓' : r.pct + '%'}` : '')),
+      bar(r.pct, r.label, 'thin'))),
+      last ? h('p', { class: 'small muted' }, '📡 Last duty: ', fmtDate(isoDate(last.date), { weekday: 'short' }), [pick(last, 'bcc', 'site'), pick(last, 'shift')].filter(Boolean).map((x) => ' · ' + x).join(''), ` · ${duty.length} logged`) : null);
+  }
+  function studiesBlock(d) {
+    const { h, dueInfo } = D();
+    const st = studies(d);
+    if (!st.items.length) return null;
+    const n = st.items.filter((x) => x.done).length, p = pct(n, st.items.length), left = st.items.filter((x) => !x.done);
+    const examDi = st.exam ? dueInfo(st.exam, false) : null;
+    return h('div', { class: 'gl-blk', id: 'c-studies' }, h('p', { class: 'small' }, `📚 ${n} / ${st.items.length} reviewed`, examDi ? h('span', { class: `chip ${examDi.cls}` }, '🗓️ Exam: ', examDi.label) : null),
+      left.length ? h('div', { class: 'gl-chips' }, left.map((x) => h('span', { class: 'chip' + (x.local ? ' local' : '') }, x.label))) : h('p', { class: 'small' }, '🎉 All subjects reviewed'));
+  }
+  function mpatBlock(d) {
+    const { h, objs, pick } = D();
+    const xs = objs(d.mpat_log ?? d.mpat, 'notes').filter((x) => isoOf(x.date)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    return h('div', { class: 'gl-blk', id: 'c-mpat' }, xs.length ? h('ul', { class: 'gl-why small' }, xs.slice(0, 3).map((x) => h('li', null, `✈️ ${fmtD(isoOf(x.date))}`, [pick(x, 'area', 'section', 'test'), pick(x, 'score'), pick(x, 'time', 'duration')].filter(Boolean).map((y) => ' · ' + y).join(''),
+      pick(x, 'notes', 'note') ? h('span', { class: 'muted' }, ' — ' + pick(x, 'notes', 'note')) : null, x._local ? h('span', { class: 'chip local' }, '✎') : null))) : h('p', { class: 'small muted' }, '✈️ No practice sessions logged yet — log them on 🏠 Today → Update → Progress.'));
+  }
+  function vaBlock(d) {
+    const { h } = D();
+    const t = today(), s = vaStats(d, t), leads = leadsOf(d);
+    if (!s.all.sent && !s.all.replies && !leads.length) return h('div', { class: 'gl-blk', id: 'c-va' }, h('p', { class: 'small muted' }, '💼 No applications logged yet — counters on 🏠 Today → Update → Progress.'));
+    const rate = (x) => (x.sent ? `${Math.round((x.replies / x.sent) * 100)}%` : '—');
+    const by = {}; leads.forEach((x) => { by[x.v.status] = (by[x.v.status] || 0) + 1; });
+    const hot = leads.filter((x) => ['Interview', 'Offer'].includes(x.v.status));
+    return h('div', { class: 'gl-blk', id: 'c-va' },
+      h('table', { class: 'hl-tbl va-tbl' }, h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Sent'), h('th', null, 'Replies'), h('th', null, 'Rate'))),
+        h('tbody', null, [['This week', s.week], ['All-time', s.all]].map(([l, x]) => h('tr', null, h('td', null, l), h('td', { class: 'm-num' }, String(x.sent)), h('td', { class: 'm-num' }, String(x.replies)), h('td', { class: 'm-num' }, rate(x)))))),
+      leads.length ? h('div', { class: 'wk-chips' }, C.LEAD_STATUS.filter((k) => by[k] && k !== 'Lost').map((k) => h('span', { class: `chip va-st va-${k.toLowerCase()}` }, `${k} ${by[k]}`))) : null,
+      hot.length ? h('ul', { class: 'va-hot' }, hot.map((x) => h('li', null, x.v.status === 'Offer' ? '🎉 ' : '🗓️ ', h('strong', null, x.v.name), x.v.role ? ` · ${x.v.role}` : '', ' ', h('span', { class: 'chip va-st va-' + x.v.status.toLowerCase() }, x.v.status), x.v.note ? h('span', { class: 'muted small' }, ' · ' + x.v.note) : null))) : null);
+  }
+  function savingsBlock(d) {
+    const { h, peso } = D();
     const sv = savingsOf(d), t = today();
     if (!sv.goal) return null;
     const m = savingsMath(sv.cur, sv.target, sv.due, t);
-    const month = t.slice(0, 7), fl = flows(txList(d).filter((x) => x.v.date.slice(0, 7) === month)), hasTx = txList(d).some((x) => x.v.date.slice(0, 7) === month);
+    const month = t.slice(0, 7), mon = txList(d).filter((x) => x.v.date.slice(0, 7) === month), fl = flows(mon);
     const dueTxt = sv.due ? fmtD(sv.due, { weekday: undefined, year: 'numeric' }) : 'no target date';
-    const body = [];
-    if (!m) body.push(empty('Savings goal has no target amount yet.'));
-    else if (m.cur == null) {
-      body.push(h('div', { class: 'meter' }, bar(null, sv.title), h('div', { class: 'meter-foot small muted' }, 'current savings not set yet')),
-        h('div', { class: 'm-stats' }, tile(peso(m.target), '🎯 Target', 'm-gross'), tile(m.ml != null ? `${Math.max(0, Math.round(m.ml))} mo` : '—', `🗓️ Left to ${dueTxt}`, 'm-unver')),
-        h('p', { class: 'small muted' }, 'Set your total savings on 🏠 Today → Update progress (or Denx adds finance.savingsTotal) to see % done and the monthly pace.'));
-    } else {
-      body.push(h('div', { class: 'meter' }, h('div', { class: 'meter-top' }, h('span', null, `${peso(m.cur)} of ${peso(m.target)}`), h('span', { class: 'small' }, `${m.pct}%`)), bar(m.pct, sv.title),
-        h('div', { class: 'meter-foot small muted' }, `${sv.src}${sv.asOf ? ' · as of ' + fmtD(sv.asOf) : ''}${sv.local ? ' · ✎ this device' : ''}`)),
-        h('div', { class: 'm-stats' }, tile(peso(m.cur), '💰 Current', 'm-paid'), tile(peso(m.remaining), '⛰️ Remaining', 'm-over'),
-          tile(m.remaining <= 0 ? '🎉 done' : m.past ? 'past due' : m.pace != null ? peso(Math.ceil(m.pace)) : '—', m.remaining <= 0 ? 'Goal reached' : `📆 Needed / month${m.ml != null && m.ml > 0 ? ` · ${Math.ceil(m.ml)} mo left` : ''}`, 'm-unpaid')));
-    }
-    if (hasTx) body.push(h('p', { class: 'small' }, `📒 Logged this month: ${fl.net < 0 ? '−' : '+'}${peso(Math.abs(fl.net))} net (in ${peso(fl.in)} · out ${peso(fl.out)})`, m && m.pace != null && m.remaining > 0 ? h('span', { class: 'muted' }, ` · pace needs ${peso(Math.ceil(m.pace))}`) : null),
-      h('p', { class: 'small muted' }, 'Supporting info from your money log only – it never changes the savings total.'));
-    return card('sun', '💰', sv.title || 'Savings goal', body, { sub: `Finance goal · target ${dueTxt}`, badge: m && m.pct != null ? `${m.pct}%` : null });
+    const kids = [];
+    if (!m) kids.push(h('p', { class: 'small muted' }, 'Savings goal has no target amount yet.'));
+    else if (m.cur == null) kids.push(h('div', { class: 'meter' }, bar(null, sv.title), h('div', { class: 'meter-foot small muted' }, `current savings not set yet · target ${peso(m.target)} by ${dueTxt}${m.ml != null ? ` (${Math.max(0, Math.round(m.ml))} mo)` : ''}`)),
+      h('p', { class: 'small muted' }, 'Set your total savings on 🏠 Today → Update → Progress (or Denx adds finance.savingsTotal).'));
+    else kids.push(h('div', { class: 'meter' }, h('div', { class: 'meter-top' }, h('span', null, `${peso(m.cur)} of ${peso(m.target)}`), h('span', { class: 'small' }, `${m.pct}%`)), bar(m.pct, sv.title),
+        h('div', { class: 'meter-foot small muted' }, `${sv.src}${sv.asOf ? ' · as of ' + fmtD(sv.asOf) : ''}${sv.local ? ' · ✎ this device' : ''} · target ${dueTxt}`)),
+      h('div', { class: 'm-stats' }, tile(peso(m.remaining), '⛰️ Remaining', 'm-over'),
+        tile(m.remaining <= 0 ? '🎉 done' : m.past ? 'past due' : m.pace != null ? peso(Math.ceil(m.pace)) : '—', m.remaining <= 0 ? 'Goal reached' : `📆 Needed / month${m.ml != null && m.ml > 0 ? ` · ${Math.ceil(m.ml)} mo left` : ''}`, 'm-unpaid')));
+    if (mon.length) kids.push(h('p', { class: 'small muted' }, `📒 Logged this month: ${fl.net < 0 ? '−' : '+'}${peso(Math.abs(fl.net))} net (supporting info only – never changes the total)`));
+    return h('div', { class: 'gl gl-sav', id: 'c-savings' }, h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, '💰 ', sv.title || 'Savings goal'), h('span', { class: 'chip area c-sun' }, 'Finance')), kids);
+  }
+  const BLOCK = { wd1: [wd1Block, 'WD1 upgrade', 'Career'], studies: [studiesBlock, 'MMPA study checklist', 'Studies'], mpat: [mpatBlock, 'MPAT practice', 'Career'], va: [vaBlock, 'Work applications', 'Career'] };
+  function goalsCard(d) {
+    const { h, card, pick, objs, dueInfo, empty, hid } = D();
+    const t = today(), hs = habits();
+    const gs = objs(d.goals, 'title').map((g) => ({ g, st: goalState(g), r: computeGoal(d, g, hs, t) }));
+    gs.forEach((x) => { if (x.st === 'active' && x.r.src !== 'auto' && x.r.p === 100) x.st = 'done'; });
+    const active = gs.filter((x) => x.st === 'active'), hold = gs.filter((x) => x.st === 'hold'), done = gs.filter((x) => x.st === 'done');
+    // trackers without a goal in notes.json still get a row (nothing that used to be on Goals disappears)
+    const hasData = { wd1: () => wd1Rows(d).length || D().arr(d.duty_log).length, studies: () => studies(d).items.length, mpat: () => D().arr(d.mpat_log ?? d.mpat).length, va: () => isObj(d.va) };
+    Object.keys(BLOCK).forEach((k) => { if (!active.some((x) => x.r.metric === k) && !hold.some((x) => x.r.metric === k) && hasData[k]()) { const g = { title: BLOCK[k][1], area: BLOCK[k][2], metric: k }; active.push({ g, st: 'active', r: computeGoal(d, g, hs, t) }); } });
+    const used = new Set();
+    const areaChip = (area) => (area ? h('span', { class: `chip area c-${AREA_COLORS[parseInt(hid(area.toLowerCase()), 36) % AREA_COLORS.length]}` }, area) : null);
+    const row = ({ g, r }) => {
+      const area = pick(g, 'area', 'category'), di = dueInfo(g.target_date, r.p === 100);
+      const blk = BLOCK[r.metric] && !used.has(r.metric) ? (used.add(r.metric), BLOCK[r.metric][0](d)) : null;
+      const msLeft = r.ms.filter((m) => !m.done), msDone = r.ms.length - msLeft.length;
+      return h('div', { class: 'gl' },
+        h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, pick(g, 'title', 'name') || '(goal)'), areaChip(area)),
+        h('div', { class: 'meter' }, bar(r.p, pick(g, 'title')),
+          h('div', { class: 'meter-foot small muted' }, r.p == null ? 'no data yet' : `${r.p}%${r.src === 'notes' ? ' · from notes' : r.src === 'milestones' ? ' · milestones' : ''}`, di ? h('span', { class: `chip ${di.cls}` }, '🏁 ', di.label) : null)),
+        r.lines.length ? h('ul', { class: 'gl-why small' }, r.lines.map((x) => h('li', null, x))) : null,
+        blk,
+        pick(g, 'next_step', 'next') ? h('p', { class: 'gl-next' }, '👉 ', pick(g, 'next_step', 'next')) : null,
+        msLeft.length ? h('ul', { class: 'gl-mlist' }, msLeft.map((m) => h('li', null, '⬜ ', pick(m, 'text', 'title', 'item')))) : null,
+        msDone ? h('p', { class: 'small muted' }, `✅ ${msDone} milestone${msDone > 1 ? 's' : ''} done`) : null,
+        goalLink(d, g));
+    };
+    const sav = savingsBlock(d);
+    if (!active.length && !hold.length && !sav) return card('peach', '🎯', 'Goals', empty('No goals yet — Denx adds them to notes.json (see README).'));
+    const holdEl = hold.length ? h('div', { class: 'gl-hold' }, h('p', { class: 'm-h' }, `⏸️ On hold (${hold.length})`),
+      h('ul', { class: 'gl-why small' }, hold.map(({ g }) => h('li', null, h('strong', null, pick(g, 'title', 'name')), pick(g, 'next_step', 'next', 'note') ? h('span', { class: 'muted' }, ' — ' + pick(g, 'next_step', 'next', 'note')) : null, ' ', goalLink(d, g))))) : null;
+    const auto = active.filter((x) => x.r.src === 'auto').length;
+    return card('peach', '🎯', 'Goals', [h('div', { class: 'gl-list' }, active.map(row), sav), holdEl,
+      done.length ? h('p', { class: 'small muted' }, `✅ ${done.length} goal${done.length > 1 ? 's' : ''} done (kept in notes.json)`) : null,
+      h('p', { class: 'small muted' }, 'Read-only · computed from habits, logs and trackers – update them on 🏠 Today → Update.')], { badge: `${active.length} active${hold.length ? ` · ${hold.length} on hold` : ''}`, wide: true, sub: auto ? `${auto} computed automatically` : null });
   }
   function habitProgressCard() {
     const { h, card, empty } = D();
@@ -409,37 +479,6 @@
     const vd = vaDaily(d), ws = weekStart(t), sum = (pred) => Object.entries(vd).filter(([k]) => pred(k)).reduce((a, [, x]) => ({ sent: a.sent + x.sent, replies: a.replies + x.replies }), { sent: 0, replies: 0 });
     return { week: sum((k) => k >= ws && k <= t), all: sum((k) => k <= t), vd };
   }
-  function vaCard(d) {
-    const { h, card } = D();
-    const t = today(), s = vaStats(d, t), leads = leadsOf(d);
-    const rate = (x) => (x.sent ? `${Math.round((x.replies / x.sent) * 100)}%` : '—');
-    const days = Array.from({ length: 14 }, (_, i) => addDays(t, i - 13)), mx = Math.max(1, ...days.map((k) => (s.vd[k] ? s.vd[k].sent : 0)));
-    const trend = h('div', { class: 'va-trend', role: 'img', 'aria-label': 'Emails sent per day, last 14 days' }, days.map((k) => {
-      const x = s.vd[k] || { sent: 0, replies: 0 };
-      return h('span', { class: 'va-day' + (k === t ? ' today' : ''), title: `${k}: ${x.sent} sent · ${x.replies} replies` }, h('span', { class: 'va-b', style: { height: Math.round((x.sent / mx) * 100) + '%' } }), x.replies ? h('span', { class: 'va-r', style: { height: Math.round((Math.min(x.replies, x.sent || x.replies) / mx) * 100) + '%' } }) : null);
-    }));
-    const by = {}; leads.forEach((x) => { by[x.v.status] = (by[x.v.status] || 0) + 1; });
-    const hot = leads.filter((x) => ['Interview', 'Offer'].includes(x.v.status));
-    return card('sky', '💼', 'VA client hunt', [
-      h('table', { class: 'hl-tbl va-tbl' }, h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Emails'), h('th', null, 'Replies'), h('th', null, 'Reply rate'))),
-        h('tbody', null, [['This week', s.week], ['All-time', s.all]].map(([l, x]) => h('tr', null, h('td', null, l), h('td', { class: 'm-num' }, String(x.sent)), h('td', { class: 'm-num' }, String(x.replies)), h('td', { class: 'm-num' }, rate(x)))))),
-      h('p', { class: 'm-h' }, '📈 Last 14 days ', h('span', { class: 'muted small' }, '(bar = sent, dark = replies)')), trend,
-      h('p', { class: 'm-h' }, '🤝 Leads'),
-      leads.length ? h('div', { class: 'wk-chips' }, C.LEAD_STATUS.filter((k) => by[k]).map((k) => h('span', { class: `chip va-st va-${k.toLowerCase()}` }, `${k} ${by[k]}`))) : h('p', { class: 'empty' }, 'No leads yet — log significant ones on Today.'),
-      hot.length ? h('ul', { class: 'va-hot' }, hot.map((x) => h('li', null, x.v.status === 'Offer' ? '🎉 ' : '🗓️ ', h('strong', null, x.v.name), x.v.role ? ` · ${x.v.role}` : '', ' ', h('span', { class: 'chip va-st va-' + x.v.status.toLowerCase() }, x.v.status), x.v.note ? h('span', { class: 'muted small' }, ' · ' + x.v.note) : null))) : null,
-      h('p', { class: 'small muted' }, 'Counters and leads are updated on 🏠 Today → Update progress.')], { badge: s.week.sent ? `${s.week.sent} this week` : null, sub: 'Outreach emails, replies and leads' });
-  }
-  function studiesReadOnly(d) {
-    const { h, card, empty, dueInfo } = D();
-    const st = studies(d);
-    if (!st.items.length) return card('lemon', '📚', 'MMPA study checklist', empty('No subjects listed yet.'));
-    const n = st.items.filter((x) => x.done).length, p = pct(n, st.items.length);
-    const examDi = st.exam ? dueInfo(st.exam, false) : null;
-    return card('lemon', '📚', 'MMPA study checklist', [h('div', { class: 'meter' }, bar(p, 'Subjects reviewed'), h('span', { class: 'small muted' }, `${n} / ${st.items.length} reviewed · ${p}%`)),
-      examDi ? h('p', null, h('span', { class: `chip ${examDi.cls}` }, '🗓️ Exam: ', examDi.label)) : null,
-      h('ul', { class: 'ro-checks' }, st.items.map((x) => h('li', { class: x.done ? 'done' : '' }, x.done ? '✅ ' : '⬜ ', x.label, x.local ? h('span', { class: 'chip local' }, '✎') : null)))], { sub: 'Tick subjects on 🏠 Today → Update progress' });
-  }
-
   /* ================= exercise log sheet (from the Exercise habit on Today) ================= */
   function openExerciseLog(date) {
     const { h } = D();
@@ -464,9 +503,9 @@
   function cards(d) {
     const safe = (fn, id) => { try { const el = fn(d); if (el) el.id = id; return el; } catch (e) { console.error(e); return null; } };
     return {
-      todayProgress: [safe(updateProgressCard, 'c-progress'), safe(logMoneyCard, 'c-logmoney')],
+      today: [safe(updateCard, 'c-update')],
       money: [safe(moneyLogCard, 'm-txlog')],
-      goals: [safe(goalsCard, 'c-goals'), safe(savingsCard, 'c-savings'), safe(vaCard, 'c-va'), safe(habitProgressCard, 'c-habitprog'), safe(studiesReadOnly, 'c-studies')],
+      goals: [safe(goalsCard, 'c-goals'), safe(habitProgressCard, 'c-habitprog')],
     };
   }
   window.Progress = { cards, loggedBetween, openExerciseLog, savingsMath, computeGoal, metricOf, flows, txList, vaStats, sheet };

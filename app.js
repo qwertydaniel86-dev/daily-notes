@@ -91,69 +91,74 @@
     const vText = typeof v === 'string' ? v : pick(v, 'text', 'verse');
     const vRef = typeof v === 'object' ? pick(v, 'ref', 'reference') : '';
     const upd = str(d.updated);
-    return h('article', { class: 'card c-sun wide hero' },
-      h('p', { class: 'hero-date' }, '📅 ', new Date(t + 'T12:00:00+08:00').toLocaleDateString('en-GB', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })),
-      vText ? h('blockquote', { class: 'verse' }, h('span', { class: 'ico', 'aria-hidden': 'true' }, '📖 '), `“${vText}”`, vRef ? h('cite', null, ` — ${vRef}`) : null)
-            : h('p', { class: 'verse muted' }, '📖 “This is the day that the LORD has made; let us rejoice and be glad in it.” — Psalm 118:24'),
-      h('p', { class: 'tag' }, 'Capture fast · Follow up faster · Finish strong 💪'),
-      upd ? h('p', { class: 'small muted' }, 'Notes updated ', fmtUpdated(upd)) : null);
+    const failed = objs(d.automations, 'name').filter((x) => str(x.status).toLowerCase() === 'failed').length;
+    const cap = window.Features && window.Features.captureEl ? window.Features.captureEl() : null;
+    return h('article', { class: 'card c-sun wide hero' }, h('div', { class: 'hero-grid' },
+      h('div', { class: 'hero-main' },
+        h('p', { class: 'hero-date' }, '📅 ', new Date(t + 'T12:00:00+08:00').toLocaleDateString('en-GB', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })),
+        vText ? h('blockquote', { class: 'verse' }, h('span', { class: 'ico', 'aria-hidden': 'true' }, '📖 '), `“${vText}”`, vRef ? h('cite', null, ` — ${vRef}`) : null)
+              : h('p', { class: 'verse muted' }, '📖 “This is the day that the LORD has made; let us rejoice and be glad in it.” — Psalm 118:24'),
+        failed ? h('p', { class: 'hero-alert small' }, `⚠️ ${failed} automation${failed > 1 ? 's' : ''} failed · details on 🗓️ Week`) : null,
+        upd ? h('p', { class: 'small muted' }, 'Notes updated ', fmtUpdated(upd)) : null),
+      cap));
   }
   function fmtUpdated(s) {
     const d = new Date(s);
     return isNaN(d) ? s : d.toLocaleString('en-GB', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) + ' PHT';
   }
 
-  function scheduleCard(d) {
-    const items = arr(d.today ?? d.schedule);
-    const body = items.length ? h('ul', { class: 'sched' }, items.map((it) => {
-      const time = typeof it === 'string' ? '' : pick(it, 'time', 'when');
-      const what = typeof it === 'string' ? it : pick(it, 'item', 'event', 'title', 'text');
-      const where = typeof it === 'object' ? pick(it, 'where', 'location', 'place') : '';
-      return h('li', null, h('span', { class: 'time' }, time || '•'), h('span', null, what, where ? h('span', { class: 'muted small' }, ` 📍 ${where}`) : null));
-    })) : empty('Nothing on the schedule. Enjoy the margin. ☕');
-    return card('sky', '🗓️', "Today's schedule", body, { badge: items.length || null });
-  }
-
-  function checklist(prefix, items, labelFn, doneFn, extraFn) {
-    const t = ticks();
-    return h('ul', { class: 'checks' }, items.map((it, i) => {
-      const label = labelFn(it);
-      const id = hid(`${prefix}:${label}`);
-      const dataDone = doneFn(it);
-      const checked = dataDone || !!t[id];
-      const li = h('li', { class: checked ? 'done' : '' });
-      const cb = h('input', { type: 'checkbox', id: `${prefix}-${i}`, checked: checked || null, disabled: dataDone || null,
-        title: dataDone ? 'Marked done in notes' : 'Tick on this device',
-        onchange: (e) => { setTick(id, e.target.checked); li.classList.toggle('done', e.target.checked); } });
-      li.append(cb, h('label', { for: `${prefix}-${i}` }, label, extraFn ? extraFn(it) : null));
-      return li;
-    }));
-  }
-
-  function todoCard(d) {
-    const items = arr(d.todo ?? d.todos);
-    const lbl = (it) => (typeof it === 'string' ? it : pick(it, 'item', 'task', 'text', 'title'));
-    const F = window.Features && window.Features.ready() ? window.Features : null;
-    if (!items.length) return card('mint', '✅', 'To-do', empty('All clear — no to-dos yet. ✨'));
-    const t = ticks();
-    const list = h('ul', { class: 'checks' }, items.map((it, i) => {
-      const label = lbl(it), tid = hid(`todo:${label}`);
-      const dataDone = typeof it === 'object' && !!it.done, legacy = !dataDone && !!t[tid]; // legacy = old device-only tick
-      const checked = dataDone || legacy;
-      const li = h('li', { class: checked ? 'done' : '' });
-      const cb = h('input', { type: 'checkbox', id: `todo-${i}`, checked: checked || null, title: F ? 'Saved encrypted on this device and sent to Denx via the Outbox' : 'Tick on this device',
-        onchange: (e) => {
-          if (legacy) setTick(tid, false);
-          if (F) F.set({ sec: 'todo', op: 'done', item: it, label, val: e.target.checked });
-          else { setTick(tid, e.target.checked); li.classList.toggle('done', e.target.checked); }
-        } });
-      const di = typeof it === 'object' ? dueInfo(it.due ?? it.deadline, dataDone) : null;
-      li.append(cb, h('label', { for: `todo-${i}` }, label, di ? h('span', { class: `chip ${di.cls}` }, di.label) : null, localMark(it)));
-      return li;
-    }));
-    return card('mint', '✅', 'To-do', list, { badge: items.filter((x) => !(x && x.done)).length || null });
-  }
   const localMark = (it) => (window.Features ? window.Features.localChip(it) : null);
+  const normT = (x) => str(x).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const addDay = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  // A folded "Done (n)" list: done items stay in notes.json (history, Denx merges) but leave the main views.
+  const doneFold = (n, kids, id) => (n ? h('details', { class: 'm-fold done-fold', id: id || null }, h('summary', null, h('span', null, `✓ Done (${n})`)), kids) : null);
+
+  /* ---------- ✅ Today: schedule (today) + open to-dos + open reminders in one card; done items fold away ---------- */
+  function todayListCard(d) {
+    const F = window.Features && window.Features.ready() ? window.Features : null;
+    const t = todayISO(), tm = addDay(t, 1), tk = ticks();
+    const sched = arr(d.today ?? d.schedule).map((it) => (typeof it === 'string' ? { item: it } : it)).filter((it) => it && typeof it === 'object');
+    const sText = (it) => pick(it, 'item', 'event', 'title', 'text');
+    const sNow = sched.filter((it) => { const iso = isoDate(it.date); return !iso || iso === t; }), sTom = sched.filter((it) => isoDate(it.date) === tm);
+    const schedKeys = new Set(sched.map((it) => (isoDate(it.date) || t) + '|' + normT(sText(it))));
+    const lbl = (it) => (typeof it === 'string' ? it : pick(it, 'item', 'task', 'text', 'title'));
+    const todos = arr(d.todo ?? d.todos).map((it, i) => {
+      const label = lbl(it), tid = hid(`todo:${label}`), dataDone = typeof it === 'object' && !!it.done, legacy = !dataDone && !!tk[tid];
+      return { it, i, label, tid, legacy, done: dataDone || legacy, di: typeof it === 'object' ? dueInfo(it.due ?? it.deadline, dataDone || legacy) : null };
+    });
+    const rems = arr(d.reminders).map((it) => (typeof it === 'string' ? { item: it } : it)).filter((it) => it && typeof it === 'object')
+      .map((it) => ({ it, label: pick(it, 'item', 'text', 'title') || '(reminder)', done: !!it.done, di: dueInfo(it.due ?? it.date, !!it.done) }))
+      .filter((r) => !schedKeys.has((isoDate(r.it.due ?? r.it.date) || '') + '|' + normT(r.label))); // same as a schedule item → shown once
+    const byDue = (a, b) => ((a.di && a.di.days != null ? a.di.days : 1e9) - (b.di && b.di.days != null ? b.di.days : 1e9)) || (a.i || 0) - (b.i || 0);
+    const todoLi = (x) => {
+      const li = h('li', { class: x.done ? 'done' : '' });
+      const cb = h('input', { type: 'checkbox', id: `todo-${x.i}`, checked: x.done || null, title: F ? 'Saved encrypted on this device and synced' : 'Tick on this device',
+        onchange: (e) => {
+          if (x.legacy) setTick(x.tid, false);
+          if (F) { F.set({ sec: 'todo', op: 'done', item: x.it, label: x.label, val: e.target.checked }); if (e.target.checked) F.toast('✅ Done – moved to “Done”'); }
+          else { setTick(x.tid, e.target.checked); li.classList.toggle('done', e.target.checked); }
+        } });
+      li.append(cb, h('label', { for: `todo-${x.i}` }, x.label, x.di && !x.done ? h('span', { class: `chip ${x.di.cls}` }, x.di.label) : null, localMark(x.it)));
+      return li;
+    };
+    const remLi = (r) => h('li', { class: 'rem-it' + (r.di && r.di.overdue ? ' overdue' : '') + (r.done ? ' done' : '') },
+      h('span', { class: 'rem-t' }, '⏰ ', r.label, localMark(r.it), r.di && !r.done ? h('span', { class: `chip ${r.di.cls}` }, r.di.overdue ? '⚠️ ' : '', r.di.label) : null),
+      F ? h('button', { type: 'button', class: 'tiny ghost rem-done', 'aria-label': (r.done ? 'Not done: ' : 'Done: ') + r.label,
+        onclick: () => { F.set({ sec: 'reminders', op: 'done', item: r.it, label: r.label, val: !r.done }); if (!r.done) F.toast('✅ Reminder done – moved to “Done”'); } }, r.done ? '↶' : '✓') : null);
+    const schedLi = (it) => h('li', null, h('span', { class: 'time' }, pick(it, 'time', 'when') || '•'), h('span', null, sText(it), pick(it, 'where', 'location', 'place') ? h('span', { class: 'muted small' }, ` 📍 ${pick(it, 'where', 'location', 'place')}`) : null, localMark(it)));
+    const openT = todos.filter((x) => !x.done).sort(byDue), doneT = todos.filter((x) => x.done);
+    const openR = rems.filter((r) => !r.done).sort(byDue), doneR = rems.filter((r) => r.done);
+    const doneAll = doneT.length + doneR.length;
+    const sub = (title, el) => [h('p', { class: 'm-h tl-h' }, title), el];
+    const body = [
+      sNow.length ? sub('🗓️ Schedule', h('ul', { class: 'sched' }, sNow.map(schedLi))) : null,
+      sTom.length ? h('p', { class: 'small muted tl-tom' }, '➡️ Tomorrow: ', sTom.map((it) => [pick(it, 'time', 'when'), sText(it)].filter(Boolean).join(' ')).join(' · ')) : null,
+      sub('✅ To-do', openT.length ? h('ul', { class: 'checks' }, openT.map(todoLi)) : empty('All clear — nothing open. ✨')),
+      openR.length ? sub('⏰ Reminders', h('ul', { class: 'bullets rem' }, openR.map(remLi))) : null,
+      doneFold(doneAll, [doneT.length ? h('ul', { class: 'checks' }, doneT.slice().reverse().slice(0, 15).map(todoLi)) : null,
+        doneR.length ? h('ul', { class: 'bullets rem' }, doneR.map(remLi)) : null], 'todo-done')];
+    return card('mint', '✅', 'Today', body, { badge: (openT.length + openR.length) || null, sub: 'Schedule · to-dos · reminders' });
+  }
 
   function statusCtl(it, st) {
     const F = window.Features && window.Features.ready() ? window.Features : null;
@@ -164,101 +169,31 @@
   }
   function taskingsCard(d) {
     const items = arr(d.taskings ?? d.tasks).map((it) => (typeof it === 'string' ? { task: it } : it));
-    if (!items.length) return card('lav', '🎖️', 'Unit taskings', empty('No open taskings. 🙌'), { wide: true });
-    const rows = items.map((it, i) => {
-      const st = statusOf(it.status);
-      const di = dueInfo(it.deadline ?? it.due, st.key === 'done');
-      return { it, st, di, i };
-    });
-    const rank = (r) => (r.st.key === 'done' ? 3 : r.di && r.di.overdue ? 0 : r.st.key === 'prog' ? 1 : 2);
-    rows.sort((a, b) => rank(a) - rank(b) || ((a.di && a.di.days != null ? a.di.days : 1e9) - (b.di && b.di.days != null ? b.di.days : 1e9)) || a.i - b.i);
-    const c = { open: 0, prog: 0, done: 0, over: 0 };
-    rows.forEach((r) => { c[r.st.key]++; if (r.di && r.di.overdue) c.over++; });
-    const summary = h('p', { class: 'summary' },
-      h('span', { class: 'chip st-open' }, `🔴 ${c.open} Open`), h('span', { class: 'chip st-prog' }, `🟡 ${c.prog} In progress`),
-      h('span', { class: 'chip st-done' }, `🟢 ${c.done} Done`), c.over ? h('span', { class: 'chip due-over' }, `⚠️ ${c.over} overdue`) : null);
-    const list = h('ul', { class: 'tasks' }, rows.map(({ it, st, di }) =>
-      h('li', { class: `task st-${st.key}${di && di.overdue ? ' overdue' : ''}` },
-        h('div', { class: 'task-top' }, h('strong', null, pick(it, 'task', 'title', 'item') || '(untitled)', localMark(it)), statusCtl(it, st)),
-        h('div', { class: 'task-meta' },
-          pick(it, 'lead', 'opr', 'owner') ? h('span', null, '👤 ', pick(it, 'lead', 'opr', 'owner')) : null,
-          di ? h('span', { class: `chip ${di.cls}` }, di.overdue ? '⚠️ ' : '📅 ', di.label) : h('span', { class: 'muted' }, '📅 no deadline')),
-        pick(it, 'notes', 'note') ? h('p', { class: 'task-notes' }, '📝 ', pick(it, 'notes', 'note')) : null)));
-    return card('lav', '🎖️', 'Unit taskings follow-ups', [summary, list], { wide: true, badge: items.length });
-  }
-
-  function dutyCard(d) {
-    const items = arr(d.duty_log ?? d.duty).map((it) => (typeof it === 'string' ? { notes: it } : it));
-    items.sort((a, b) => str(b.date).localeCompare(str(a.date)));
-    const body = items.length ? h('ul', { class: 'log' }, items.slice(0, 10).map((it) => {
-      const iso = isoDate(it.date);
-      return h('li', null,
-        h('div', { class: 'log-top' }, h('strong', null, iso ? fmtDate(iso, { weekday: 'short', year: 'numeric' }) : str(it.date) || '—'),
-          pick(it, 'bcc', 'site') ? h('span', { class: 'chip' }, '📡 ', pick(it, 'bcc', 'site')) : null,
-          pick(it, 'shift') ? h('span', { class: 'chip' }, '🕐 ', pick(it, 'shift')) : null),
-        pick(it, 'notes', 'note') ? h('p', { class: 'small' }, pick(it, 'notes', 'note')) : null);
-    })) : empty('No duty entries yet.');
-    return card('peach', '📡', 'WD duty log', body, { sub: 'Unclassified admin notes only.', badge: items.length || null });
-  }
-
-  const WD1_LABELS = { years: ['⏳', 'Time in service', 'yrs'], live: ['🛰️', 'Live intercepts', ''], sim: ['🖥️', 'Sim intercepts', ''], hours: ['⏱️', 'Hours', 'h'] };
-  function wd1Card(d) {
-    const w = d.wd1 && typeof d.wd1 === 'object' ? d.wd1 : null;
-    const keys = w ? Object.keys(w).filter((k) => w[k] && typeof w[k] === 'object') : [];
-    if (!keys.length) return card('rose', '🎯', 'WD1 upgrade tracker', empty('No tracker data yet.'));
-    const order = Object.keys(WD1_LABELS);
-    keys.sort((a, b) => ((order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)));
-    let tot = 0, cnt = 0;
-    const rows = keys.map((k) => {
-      const [ico, label, unit] = WD1_LABELS[k] || ['📌', k.replace(/_/g, ' '), ''];
-      const req = num(w[k].req ?? w[k].required), cur = num(w[k].cur ?? w[k].current);
-      const pct = req && cur != null ? Math.max(0, Math.min(100, Math.round((cur / req) * 100))) : null;
-      if (pct != null) { tot += pct; cnt++; }
-      const togo = req != null && cur != null ? Math.max(0, req - cur) : null;
-      return h('div', { class: 'meter' },
-        h('div', { class: 'meter-top' }, h('span', null, ico, ' ', label),
-          h('span', { class: 'small' }, cur == null ? h('span', { class: 'muted' }, `not set / ${fmtNum(req)}${unit ? ' ' + unit : ''}`) : `${fmtNum(cur)} / ${fmtNum(req)}${unit ? ' ' + unit : ''}`)),
-        h('div', { class: `bar${pct == null ? ' unknown' : ''}`, role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct ?? 0, 'aria-label': label },
-          h('span', { style: { width: `${pct ?? 0}%` } })),
-        h('div', { class: 'meter-foot small muted' }, pct == null ? 'not set yet · update on 🏠 Today → Update progress' : pct >= 100 ? '🎉 Requirement met' : `${pct}% · ${fmtNum(togo)}${unit ? ' ' + unit : ''} to go`));
-    });
-    return card('rose', '🎯', 'WD1 upgrade tracker', rows, { badge: cnt ? `${Math.round(tot / cnt)}% avg` : null });
-  }
-
-  function mpatCard(d) {
-    const items = arr(d.mpat_log ?? d.mpat).map((it) => (typeof it === 'string' ? { notes: it } : it));
-    items.sort((a, b) => str(b.date).localeCompare(str(a.date)));
-    const body = items.length ? h('ul', { class: 'log' }, items.slice(0, 12).map((it) => {
-      const iso = isoDate(it.date);
-      const score = pick(it, 'score'), time = pick(it, 'time', 'duration');
-      return h('li', null,
-        h('div', { class: 'log-top' }, h('strong', null, iso ? fmtDate(iso, { weekday: 'short' }) : str(it.date) || '—'),
-          pick(it, 'area', 'section', 'test') ? h('span', { class: 'chip' }, '🧩 ', pick(it, 'area', 'section', 'test')) : null,
-          score || time ? h('span', { class: 'chip st-done' }, '🎯 ', [score, time].filter(Boolean).join(' · ')) : null),
-        pick(it, 'notes', 'weak_spots', 'note') ? h('p', { class: 'small' }, '📝 ', pick(it, 'notes', 'weak_spots', 'note')) : null);
-    })) : empty('No practice sessions logged yet. Track the trend, not just the score. ✈️');
-    return card('aqua', '✈️', 'MPAT practice log', body, { badge: items.length || null });
+    const rows = items.map((it, i) => { const st = statusOf(it.status); return { it, st, di: dueInfo(it.deadline ?? it.due, st.key === 'done'), i }; });
+    const rank = (r) => (r.di && r.di.overdue ? 0 : r.st.key === 'open' ? 1 : 2);
+    const open = rows.filter((r) => r.st.key !== 'done').sort((a, b) => rank(a) - rank(b) || ((a.di && a.di.days != null ? a.di.days : 1e9) - (b.di && b.di.days != null ? b.di.days : 1e9)) || a.i - b.i);
+    const done = rows.filter((r) => r.st.key === 'done');
+    const over = open.filter((r) => r.di && r.di.overdue).length;
+    const row = ({ it, st, di }) => h('li', { class: `task st-${st.key}${di && di.overdue ? ' overdue' : ''}` },
+      h('div', { class: 'task-top' }, h('strong', null, pick(it, 'task', 'title', 'item') || '(untitled)', localMark(it)), statusCtl(it, st)),
+      h('div', { class: 'task-meta' },
+        pick(it, 'lead', 'opr', 'owner') ? h('span', null, '👤 ', pick(it, 'lead', 'opr', 'owner')) : null,
+        di && st.key !== 'done' ? h('span', { class: `chip ${di.cls}` }, di.overdue ? '⚠️ ' : '📅 ', di.label) : null,
+        pick(it, 'notes', 'note') ? h('span', { class: 'task-notes' }, '📝 ', pick(it, 'notes', 'note')) : null));
+    return card('lav', '🎖️', 'Unit taskings', [
+      over ? h('p', { class: 'summary' }, h('span', { class: 'chip due-over' }, `⚠️ ${over} overdue`)) : null,
+      open.length ? h('ul', { class: 'tasks' }, open.map(row)) : empty('No open taskings. 🙌'),
+      doneFold(done.length, h('ul', { class: 'tasks' }, done.map(row)), 'task-done')], { wide: true, badge: open.length || null });
   }
 
   function ideasCard(d) {
     const items = arr(d.ideas);
-    const body = items.length ? h('ul', { class: 'bullets' }, items.map((it) => {
+    if (!items.length) return null; // nothing to show → no card
+    return card('lilac', '💡', 'Ideas', h('ul', { class: 'bullets' }, items.map((it) => {
       const t = typeof it === 'string' ? it : pick(it, 'item', 'idea', 'text', 'title');
       const tag = typeof it === 'object' ? pick(it, 'tag', 'project') : '';
       return h('li', null, t, tag ? h('span', { class: 'chip' }, '#', tag) : null);
-    })) : empty('Brain-dump first, polish later. 💭');
-    return card('lilac', '💡', 'Ideas / HIRAM PH', body, { badge: items.length || null });
-  }
-
-  function remindersCard(d) {
-    const items = arr(d.reminders).map((it) => (typeof it === 'string' ? { item: it } : it));
-    items.sort((a, b) => (isoDate(a.due) || '9999').localeCompare(isoDate(b.due) || '9999'));
-    const body = items.length ? h('ul', { class: 'bullets rem' }, items.map((it) => {
-      const di = dueInfo(it.due ?? it.date, !!it.done);
-      return h('li', { class: di && di.overdue ? 'overdue' : '' }, pick(it, 'item', 'text', 'title') || '(reminder)', localMark(it),
-        di ? h('span', { class: `chip ${di.cls}` }, di.overdue ? '⚠️ ' : '⏰ ', di.label) : null);
-    })) : empty('No reminders. No late fees, no stress. 😌');
-    return card('coral', '💸', 'Reminders', body, { badge: items.length || null });
+    })), { badge: items.length });
   }
 
   /* ---------- money (all optional): bills · bills_summary · bills_outlook · subscriptions · decisions · automations · finance_tips ----------
@@ -326,20 +261,21 @@
       else if (r.key === 'other') tot.other += r.amount;
       else tot.unpaid += r.amount;
     });
+    const subs = subRows(d), st = subTotals(subs);
     const monthName = new Date(t + 'T12:00:00+08:00').toLocaleDateString('en-GB', { timeZone: TZ, month: 'long' });
     const stat = (cls, label, v) => h('div', { class: `m-stat ${cls}` }, h('span', { class: 'm-stat-v' }, peso(v)), h('span', { class: 'm-stat-l' }, label));
     const totals = h('div', { class: 'm-stats' },
       stat('m-unpaid', `⏳ Unpaid · ${monthName}`, tot.unpaid),
       stat('m-paid', `✅ Paid · ${monthName}`, tot.paid),
       tot.unver ? stat('m-unver', '❔ Unverified', tot.unver) : null,
-      tot.other ? stat('m-neutral', '• Other status', tot.other) : null);
+      tot.other ? stat('m-neutral', '• Other status', tot.other) : null,
+      subs.length ? stat('m-gross', '🔁 Subscriptions / mo', st.active) : null);
     const mt = sum ? num(sum.month_total ?? sum.total) : null;
     const forOther = sum && /^\d{4}-\d{2}/.test(str(sum.month)) && str(sum.month).slice(0, 7) !== month;
-    const sumLine = sum && (mt != null || pick(sum, 'note')) ? h('p', { class: 'm-sumline' },
-      mt != null ? h('strong', null, `🧾 ${forOther ? fmtDate(str(sum.month).slice(0, 7) + '-15', { day: undefined, month: 'long', year: 'numeric' }) : monthName} total: ${peso(mt)}`) : null, pick(sum, 'note') ? h('span', { class: 'small muted' }, ' ', pick(sum, 'note')) : null) : null;
-    const list = rows.length ? h('ul', { class: 'm-list' }, rows.map((r) => {
-      const st = BILL_ST[r.key];
-      const chip = st ? h('span', { class: `chip ${st[2]}` }, st[0], ' ', st[1]) : neutralChip(r.raw);
+    const sumLine = sum && mt != null ? h('p', { class: 'm-sumline' }, h('strong', null, `🧾 ${forOther ? fmtDate(str(sum.month).slice(0, 7) + '-15', { day: undefined, month: 'long', year: 'numeric' }) : monthName} total: ${peso(mt)}`)) : null;
+    const billLi = (r) => {
+      const bs = BILL_ST[r.key];
+      const chip = bs ? h('span', { class: `chip ${bs[2]}` }, bs[0], ' ', bs[1]) : neutralChip(r.raw);
       const dueCls = r.dt ? (r.key === 'paid' ? 'due-done' : r.dt.cls) : '';
       return h('li', { class: `m-item b-${r.key}${r.soon ? ' soon' : ''}` },
         h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, pick(r.it, 'name', 'title', 'item') || '(bill)'), h('span', { class: 'm-amt' }, peso(r.amount))),
@@ -348,15 +284,19 @@
             r.key === 'unverified' && r.dt.days != null && r.dt.days < 0 ? ' · verify' : '') : h('span', { class: 'chip due-text' }, '📅 no due date')),
         pick(r.it, 'note', 'notes') ? h('p', { class: 'm-note' }, '📝 ', pick(r.it, 'note', 'notes')) : null,
         billCtl(r));
-    })) : empty('No bills listed. 🎉');
+    };
+    const open = rows.filter((r) => r.key !== 'paid'), paid = rows.filter((r) => r.key === 'paid');
+    const list = open.length ? h('ul', { class: 'm-list' }, open.map(billLi)) : empty(rows.length ? 'Nothing left to pay. 🎉' : 'No bills listed. 🎉');
     const out = outlook.length ? h('div', { class: 'm-outlook' }, h('p', { class: 'm-h' }, '🔭 Outlook'), h('ul', { class: 'bullets' }, outlook.map((x) => h('li', null, x)))) : null;
     const dueSoon = rows.filter((r) => r.soon).length;
-    return card('peach', '💳', 'Bills & loans', [
-      rows.length ? totals : null, sumLine,
+    return card('peach', '💳', 'Bills, loans & subscriptions', [
+      rows.length || subs.length ? totals : null, sumLine,
       overN ? h('p', { class: 'summary' }, h('span', { class: 'chip due-over' }, `🚨 ${overN} overdue · ${peso(overAmt)}`)) : null,
-      list, out], { badge: dueSoon ? `🔔 ${dueSoon} due ≤3d` : rows.length || null, sub: 'Money · sorted by due date' });
+      list, doneFold(paid.length, h('ul', { class: 'm-list' }, paid.map(billLi)), 'bills-paid'),
+      out, subs.length ? subsBlock(subs, st) : null,
+      sum && pick(sum, 'note') ? h('details', { class: 'm-fold' }, h('summary', null, h('span', null, '📝 Summary note')), h('p', { class: 'small' }, pick(sum, 'note'))) : null],
+      { badge: dueSoon ? `🔔 ${dueSoon} due ≤3d` : open.length || null, sub: 'Sorted by due date · paid ones fold away' });
   }
-
   const SUB_ST = { active: ['🟢', 'Active', 'm-paid'], 'maybe lapsed': ['🟠', 'Maybe lapsed', 'm-unpaid'], cancelled: ['⚫', 'Cancelled', 'm-cancel'] };
   const CYCLE = { monthly: [1, '/mo'], month: [1, '/mo'], yearly: [1 / 12, '/yr'], annual: [1 / 12, '/yr'], annually: [1 / 12, '/yr'], year: [1 / 12, '/yr'],
     quarterly: [1 / 3, '/qtr'], weekly: [52 / 12, '/wk'] };
@@ -383,27 +323,26 @@
     });
     return { active, maybe, uncounted };
   }
-  function subscriptionsCard(d) {
-    const rows = subRows(d);
-    const { active, maybe, uncounted } = subTotals(rows);
-    const total = rows.length ? h('div', { class: 'm-stats' },
-      h('div', { class: 'm-stat m-paid' }, h('span', { class: 'm-stat-v' }, peso(active)), h('span', { class: 'm-stat-l' }, `🔁 per month · ≈ ${peso(active * 12)}/yr`)),
-      maybe ? h('div', { class: 'm-stat m-unpaid' }, h('span', { class: 'm-stat-v' }, '+' + peso(maybe)), h('span', { class: 'm-stat-l' }, '🟠 if “maybe lapsed” still bills')) : null) : null;
-    const list = rows.length ? h('ul', { class: 'm-list' }, rows.map((r) => {
-      const st = SUB_ST[r.key];
+  function subsBlock(rows, tots) {
+    const { maybe, uncounted } = tots || subTotals(rows);
+    const live = rows.filter((r) => r.key !== 'cancelled');
+    const li = (r) => {
+      const ss = SUB_ST[r.key];
       const unit = r.cyc ? r.cyc[1] : str(r.it.cycle) ? ` · ${str(r.it.cycle)}` : '';
       const price = r.amount != null ? money(r.amount, r.cur) + unit : r.php != null ? peso(r.php) + unit : '—';
       const eq = r.cur !== 'PHP' && r.php != null ? `≈ ${peso(r.php)}` : r.cyc && r.cyc[0] !== 1 && r.monthly != null ? `≈ ${peso(r.monthly)}/mo` : '';
       return h('li', { class: `m-item s-${r.key.replace(' ', '-')}` },
         h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, pick(r.it, 'name', 'title', 'service') || '(subscription)'),
           h('span', { class: 'm-amt' }, price, eq ? h('span', { class: 'm-eq' }, eq) : null)),
-        h('div', { class: 'm-meta' }, st ? h('span', { class: `chip ${st[2]}` }, st[0], ' ', st[1]) : neutralChip(r.raw),
+        h('div', { class: 'm-meta' }, r.key !== 'active' ? (ss ? h('span', { class: `chip ${ss[2]}` }, ss[0], ' ', ss[1]) : neutralChip(r.raw)) : null,
           r.dt ? h('span', { class: `chip ${r.dt.cls === 'due-over' ? 'due-text' : r.dt.cls}` }, '🔄 ', r.dt.text) : null,
           pick(r.it, 'method', 'card', 'payment') ? h('span', { class: 'chip' }, '💳 ', maskNum(pick(r.it, 'method', 'card', 'payment'))) : null),
         pick(r.it, 'note', 'notes') ? h('p', { class: 'm-note' }, '📝 ', pick(r.it, 'note', 'notes')) : null);
-    })) : empty('No subscriptions listed.');
-    return card('sky', '🔁', 'Subscriptions', [total, uncounted ? h('p', { class: 'small muted' }, `${uncounted} not counted (no ₱ amount or unknown cycle)`) : null, list],
-      { badge: rows.filter((r) => r.key !== 'cancelled').length || null, sub: 'Money · monthly-equivalent in ₱' });
+    };
+    return h('div', { class: 'm-subs', id: 'm-subscriptions' }, h('p', { class: 'm-h' }, `🔁 Subscriptions (${live.length})`,
+      maybe ? h('span', { class: 'muted small' }, ` · +${peso(maybe)}/mo if “maybe lapsed” still bills`) : null),
+      uncounted ? h('p', { class: 'small muted' }, `${uncounted} not counted (no ₱ amount or unknown cycle)`) : null,
+      live.length ? h('ul', { class: 'm-list' }, live.map(li)) : empty('No active subscriptions.'));
   }
 
   const DEC_ST = { open: ['❓', 'Open', 'm-over'], waiting: ['⏳', 'Waiting', 'm-unpaid'], decided: ['✅', 'Decided', 'm-paid'] };
@@ -414,18 +353,25 @@
       const raw = str(it.status).toLowerCase().trim();
       return { it, i, raw, key: DEC_ST[raw] ? raw : raw ? 'other' : 'open' };
     }).sort((a, b) => rank[a.key] - rank[b.key] || a.i - b.i);
-    const list = rows.length ? h('ul', { class: 'm-list' }, rows.map((r) => {
-      const st = DEC_ST[r.key];
+    const li = (r) => {
+      const ds = DEC_ST[r.key];
       const since = str(r.it.since ?? r.it.date), ld = looseDate(since);
       const age = ld ? -daysBetween(todayISO(), ld.iso) : null;
       return h('li', { class: `m-item d-${r.key}` },
         h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, pick(r.it, 'title', 'name', 'item') || '(decision)'),
-          st ? h('span', { class: `chip ${st[2]}` }, st[0], ' ', st[1]) : neutralChip(r.raw)),
+          ds ? h('span', { class: `chip ${ds[2]}` }, ds[0], ' ', ds[1]) : neutralChip(r.raw)),
         pick(r.it, 'detail', 'details', 'note', 'notes') ? h('p', { class: 'm-note' }, pick(r.it, 'detail', 'details', 'note', 'notes')) : null,
-        since ? h('div', { class: 'm-meta' }, h('span', { class: 'chip due-text' }, '🕰️ since ',
+        since && r.key !== 'decided' ? h('div', { class: 'm-meta' }, h('span', { class: 'chip due-text' }, '🕰️ since ',
           ld ? fmtDate(ld.iso, ld.iso.slice(0, 4) !== todayISO().slice(0, 4) ? { year: 'numeric' } : {}) + (age > 0 ? ` · ${age}d` : '') : since)) : null);
-    })) : empty('Nothing waiting on you. 🧘');
-    return card('lemon', '🤔', 'Needs a decision', list, { badge: rows.filter((r) => r.key !== 'decided').length || null });
+    };
+    const open = rows.filter((r) => r.key !== 'decided'), done = rows.filter((r) => r.key === 'decided');
+    const tips = arr(d.finance_tips).map((x) => (typeof x === 'string' ? { text: x.trim() } : x && typeof x === 'object' ? { title: pick(x, 'title', 'name'), text: pick(x, 'text', 'detail', 'tip') } : null)).filter((x) => x && (x.title || x.text));
+    return card('lemon', '🤔', 'Decisions & strategy', [
+      open.length ? h('ul', { class: 'm-list' }, open.map(li)) : empty('Nothing waiting on you. 🧘'),
+      doneFold(done.length, h('ul', { class: 'm-list' }, done.map(li)), 'dec-done'),
+      tips.length ? h('details', { class: 'm-fold', id: 'm-finance_tips' }, h('summary', null, h('span', null, `🧭 Money strategy (${tips.length})`)),
+        h('ol', { class: 'm-tips' }, tips.map((x) => h('li', null, x.title ? h('strong', null, x.title) : null, x.title && x.text ? ' — ' : null, x.text ? h('span', null, x.text) : null)))) : null],
+      { badge: open.length || null });
   }
 
   const AUTO_ST = { ok: ['🟢', 'OK', 'm-paid'], failed: ['🔴', 'Failed', 'm-over'], unknown: ['⚪', 'Unknown', 'm-neutral'] };
@@ -439,22 +385,15 @@
       return h('li', { class: `m-item a-${r.key}` },
         h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, pick(r.it, 'name', 'title') || '(automation)'),
           st ? h('span', { class: `chip ${st[2]}` }, st[0], ' ', st[1]) : neutralChip(r.raw)),
-        pick(r.it, 'description', 'desc', 'what') ? h('p', { class: 'm-note' }, pick(r.it, 'description', 'desc', 'what')) : null,
+        r.key !== 'ok' && pick(r.it, 'description', 'desc', 'what') ? h('p', { class: 'm-note' }, pick(r.it, 'description', 'desc', 'what')) : null,
         h('div', { class: 'm-meta' },
           pick(r.it, 'schedule', 'when', 'cron') ? h('span', { class: 'chip' }, '🕐 ', pick(r.it, 'schedule', 'when', 'cron')) : null,
           h('span', { class: 'chip due-text' }, '↻ last run: ', lr ? (isNaN(lt) ? lr : `${fmtUpdated(lr)} · ${ago(Date.now() - lt)}`) : '—')));
     })) : empty('No automations listed.');
     const failed = rows.filter((r) => r.key === 'failed').length;
-    return card('aqua', '🤖', 'Automations', list, { badge: failed ? `🔴 ${failed} failed` : rows.length || null });
+    return card('aqua', '🤖', 'Automations', list, { badge: failed ? `🔴 ${failed} failed` : rows.length || null, sub: 'Denx’s scheduled runs' });
   }
 
-  function tipsCard(d) {
-    const items = arr(d.finance_tips).map((x) => (typeof x === 'string' ? { text: x.trim() } : x && typeof x === 'object' ? { title: pick(x, 'title', 'name'), text: pick(x, 'text', 'detail', 'tip') } : null))
-      .filter((x) => x && (x.title || x.text));
-    const body = items.length ? h('ol', { class: 'm-tips' }, items.map((x) => h('li', null, x.title ? h('strong', null, x.title) : null, x.title && x.text ? ' — ' : null, x.text ? h('span', null, x.text) : null)))
-      : empty('No strategy notes yet.');
-    return card('mint', '🧭', 'Money strategy', body, { badge: items.length || null });
-  }
   /* ---------- pay / free cash / debts (optional: income · balances · debts) ----------
      Id-like keys (tin, gsis, pagibig, philhealth, id, account, number …) are stripped before anything is read, so they can never render. */
   const ID_LIKE = /tin|gsis|pagibig|philhealth|id|account|number/;
@@ -504,7 +443,7 @@
 
   function payCard(d) {
     const M = incomeModel(d);
-    if (!M) return card('mint', '💰', 'Pay', empty('No pay details.'));
+    if (!M) return card('sun', '💰', 'Free cash', freeCashBlock(d), { sub: 'From cash on hand' });
     const t = todayISO(), [ty, tm] = t.split('-').map(Number);
     const tiles = h('div', { class: 'm-stats m-3' },
       stat('m-gross', `🧾 Gross${M.stated.g ? '' : ' (items)'}`, M.gross), stat('m-unpaid', `➖ Deductions${M.stated.d ? '' : ' (items)'}`, M.deductions),
@@ -541,10 +480,10 @@
         h('div', { class: 'meter-foot small muted' }, !ok ? (L.term ? `term “${L.term}”` : 'no term') : left === 0 ? '🎉 Paid off' :
           `${paid}/${total} paid · ${left} mo left · ≈ payoff ${monthLabel(ty, tm - 1 + left)}${L.amount != null ? ` · ≈ ${peso(left * L.amount)} to go` : ''}`));
     })) : null;
-    return card('mint', '💰', 'Pay', [tiles, diffs, payday, allow, ded, loans, M.note ? h('p', { class: 'm-note' }, '📝 ', M.note) : null], { sub: 'Money · slip totals are the source of truth' });
+    return card('mint', '💰', 'Pay & free cash', [tiles, diffs, payday, freeCashBlock(d), allow, ded, loans, M.note ? h('p', { class: 'm-note' }, '📝 ', M.note) : null], { sub: 'Slip totals are the source of truth', wide: true });
   }
 
-  function freeCashCard(d) {
+  function freeCashBlock(d) {
     const M = incomeModel(d), t = todayISO(), [ty, tm] = t.split('-').map(Number);
     const cash = balancesOf(d), cashSum = sumOf(cash);
     const bills = billRows(d), subs = subRows(d);
@@ -593,8 +532,9 @@
         ledger([['+', 'Net pay', M.net], ['−', sum != null ? 'Bills this month (summary total)' : `Bills due this month (${mb.length})`, mBills],
           ['−', 'Subscriptions (monthly equiv.)', st.active], cash.length ? ['+', 'Cash on hand', cashSum] : null], M.net - mBills - st.active + cashSum, `Free cash · ${mName}`));
     }
-    return card('sun', '🧮', 'Free cash', [blocks, notes.length ? h('ul', { class: 'm-diffs' }, notes.map((x) => h('li', null, 'ℹ️ ', x))) : null,
-      h('p', { class: 'small muted' }, 'Estimate only — from your notes, not a bank balance. Paid bills excluded from the period view.')], { badge: '≈ estimate', sub: 'Money · what is left after bills & subscriptions' });
+    return h('div', { class: 'm-free', id: 'm-freecash' }, h('p', { class: 'm-h m-free-h' }, '🧮 Free cash ', h('span', { class: 'chip m-neutral' }, '≈ estimate')),
+      blocks, notes.length ? h('ul', { class: 'm-diffs' }, notes.map((x) => h('li', null, 'ℹ️ ', x))) : null,
+      h('p', { class: 'small muted' }, 'Estimate only — from your notes, not a bank balance. Paid bills excluded from the period view.'))
   }
 
   function debtsCard(d) {
@@ -636,11 +576,9 @@
   function moneyCards(d) {
     const has = (k) => Object.prototype.hasOwnProperty.call(d, k) && d[k] != null;
     const out = [];
-    if (has('income')) out.push(['pay', payCard]);
-    if (has('income') || has('balances')) out.push(['freecash', freeCashCard]);
-    if (has('bills') || has('bills_summary') || has('bills_outlook')) out.push(['bills', billsCard]);
-    if (has('subscriptions')) out.push(['subscriptions', subscriptionsCard]);
-    if (has('decisions')) out.push(['decisions', decisionsCard]);
+    if (has('income') || has('balances')) out.push(['pay', payCard]);
+    if (has('bills') || has('bills_summary') || has('bills_outlook') || has('subscriptions')) out.push(['bills', billsCard]);
+    if (has('decisions') || has('finance_tips')) out.push(['decisions', decisionsCard]);
     if (has('debts')) out.push(['debts', debtsCard]);
     return out;
   }
@@ -648,7 +586,6 @@
     const has = (k) => Object.prototype.hasOwnProperty.call(d, k) && d[k] != null;
     const out = [];
     if (has('automations')) out.push(['automations', automationsCard]);
-    if (has('finance_tips')) out.push(['finance_tips', tipsCard]);
     return out;
   }
 
@@ -679,20 +616,21 @@
     const board = $('board');
     const safe = (fn) => { try { return fn(d); } catch (e) { console.error(e); return card('mist', '⚠️', fn.name, empty('Could not render this section.')); } };
     const tag = (sec, id) => (el) => { if (el) { if (id && !el.id) el.id = id; el.dataset.sec = sec; } return el; };
-    const money = (list, secOf) => list.map(([k, fn]) => { let c; try { c = fn(d); c.id = 'm-' + k; } catch (e) { console.error(e); c = card('mist', '⚠️', k.replace(/_/g, ' '), empty('Could not render this section.')); }
-      c.dataset.sec = secOf ? secOf(k) : 'money'; return c; });
-    const fx = F ? F.cards(d) : { todayTop: [], todayMid: [], todayEnd: [], week: [], health: [], links: [], search: [] };
-    const px = window.Progress ? window.Progress.cards(d) : { todayProgress: [], money: [], goals: [] };
+    const money = (list, secOf) => list.map(([k, fn]) => { let c; try { c = fn(d); if (!c) return null; c.id = 'm-' + k; } catch (e) { console.error(e); c = card('mist', '⚠️', k.replace(/_/g, ' '), empty('Could not render this section.')); }
+      c.dataset.sec = secOf ? secOf(k) : 'money'; return c; }).filter(Boolean);
+    const fx = F ? F.cards(d) : { todayEnd: [], todayMid: [], week: [], goals: [], links: [], search: [] };
+    const px = window.Progress ? window.Progress.cards(d) : { today: [], money: [], goals: [] };
     const habitsCard = window.Habits ? window.Habits.el() : null;
-    const T = (fn, id) => tag('today', id)(safe(fn)), G = (fn, id) => tag('goals', id)(safe(fn));
+    const T = (fn, id) => tag('today', id)(safe(fn));
+    // One place per piece of info: Today = do / capture · Week = calendar + review · Money · Goals (read-only) · Links · Search
     board.replaceChildren(...[
-      T(headerCard, 'c-hero'), ...fx.todayTop.map(tag('today')), tag('today')(habitsCard), T(scheduleCard, 'c-schedule'), T(todoCard, 'c-todo'), T(remindersCard, 'c-reminders'),
-      T(taskingsCard, 'c-taskings'), ...(px.todayProgress || []).map(tag('today')), ...fx.todayMid.map(tag('today')), T(dutyCard, 'c-duty'), T(ideasCard, 'c-ideas'),
-      ...fx.week.map(tag('week')),
-      ...money(moneyCards(d)), ...(px.money || []).map(tag('money')), ...money(moneyCardsLate(d), (k) => (k === 'automations' ? 'today' : 'money')),
-      ...(px.goals || []).map(tag('goals')), G(wd1Card, 'c-wd1'), G(mpatCard, 'c-mpat'),
-      ...fx.health.map(tag('health')), ...(fx.links || []).map(tag('links')), ...fx.search.map(tag('search')),
-      ...safe(extraCards).map(tag('today')), ...(fx.todayEnd || []).map(tag('today'))].filter(Boolean));
+      T(headerCard, 'c-hero'), tag('today')(habitsCard), T(todayListCard, 'c-todo'), T(taskingsCard, 'c-taskings'),
+      ...(px.today || []).map(tag('today')), ...(fx.todayMid || []).map(tag('today')), T(ideasCard, 'c-ideas'),
+      ...(fx.week || []).map(tag('week')), ...money(moneyCardsLate(d), () => 'week'),
+      ...money(moneyCards(d)), ...(px.money || []).map(tag('money')),
+      ...(px.goals || []).map(tag('goals')), ...(fx.goals || []).map(tag('goals')),
+      ...(fx.links || []).map(tag('links')), ...(fx.search || []).map(tag('search')),
+      ...[].concat(safe(extraCards)).map(tag('today')), ...(fx.todayEnd || []).map(tag('today'))].filter(Boolean));
     $('updated').textContent = str(d.updated) ? '⟳ ' + fmtUpdated(str(d.updated)) : '';
     if (F) F.afterRender(d);
   }
@@ -701,7 +639,7 @@
   // Helpers for features.js (no data – functions only).
   const idTok = (k) => /gsis|pag_?ibig|philhealth/.test(String(k).toLowerCase().replace(/-/g, '_')) ||
     String(k).replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z]+/).some((w) => ['tin', 'id', 'ids', 'account', 'accounts', 'acct', 'number', 'numbers', 'no'].includes(w));
-  window.DN = { maskNum, h, str, pick, arr, num, objs, fmtNum, card, empty, todayISO, isoDate, daysBetween, fmtDate, dueInfo, statusOf, hid, peso, moneyDate, billRows, subRows, idTok, rerender };
+  window.DN = { maskNum, h, str, pick, arr, num, objs, fmtNum, card, empty, todayISO, isoDate, daysBetween, fmtDate, dueInfo, statusOf, hid, peso, moneyDate, billRows, subRows, idTok, rerender, doneFold, normT };
 
   /* ---------- auth / data flow ---------- */
   async function fetchEnvelope() {

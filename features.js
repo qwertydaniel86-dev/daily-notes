@@ -165,8 +165,9 @@
   }
 
   /* ================= Quick capture + Outbox ================= */
-  function captureCard() {
-    const { h, card } = D();
+  function captureEl() {
+    if (!ready()) return null;
+    const { h } = D();
     let kind = 'todo';
     const seg = h('div', { class: 'seg qc-seg', role: 'radiogroup', 'aria-label': 'Type' });
     const kinds = [['todo', '✅ To-do'], ['reminder', '⏰ Reminder'], ['note', '🗒️ Note']];
@@ -177,9 +178,9 @@
     const form = h('form', { class: 'qc', onsubmit: (e) => {
       e.preventDefault();
       if (!add(kind, txt.value, due.value || '')) { txt.focus(); return; }
-      toast(kind === 'note' ? '🗒️ Note saved on this device' : `➕ ${kind === 'todo' ? 'To-do' : 'Reminder'} added – in the Outbox for Denx`);
+      toast(kind === 'note' ? '🗒️ Note saved – syncing via the Outbox' : `➕ ${kind === 'todo' ? 'To-do' : 'Reminder'} added – syncing via the Outbox`);
     } }, seg, h('div', { class: 'qc-row' }, txt, due, h('button', { type: 'submit', class: 'qc-add' }, 'Add')));
-    return card('lemon', '✍️', 'Quick capture', form, { sub: 'Saved encrypted on this device · sent to Denx via the Outbox' });
+    return h('div', { class: 'hero-cap', id: 'c-capture' }, h('p', { class: 'm-h' }, '✍️ Quick capture'), form, h('p', { class: 'small muted' }, 'Saved encrypted on this device · syncs via the Outbox'));
   }
   function exportPayload() { return { dn_edits: 1, device: O.device, exported: new Date().toISOString(), edits: O.edits.map(({ eid, sec, op, key: k, label, labelText, val, at }) => ({ eid, sec, op, key: k, label, labelText, val, at })) }; }
   function denxText() {
@@ -237,16 +238,16 @@
   function weekCard(d) {
     const { h, card } = D();
     const t = today(), days = Array.from({ length: 7 }, (_, i) => addDays(t, i)), end = days[6];
-    const items = datedItems(d);
-    const overdue = items.filter((x) => x.iso < t && !x.done && ['tasking', 'todo', 'reminder', 'bill'].includes(x.kind));
+    const seen = new Set(), items = datedItems(d).filter((x) => { if (x.done) return false; const k = x.iso + '|' + D().normT(x.text); if (seen.has(k)) return false; seen.add(k); return true; }); // done items leave the calendar; same item twice → once
+    const overdue = items.filter((x) => x.iso < t && ['tasking', 'todo', 'reminder', 'bill'].includes(x.kind));
     const strip = overdue.length ? h('div', { class: 'wk-over' }, h('p', { class: 'wk-over-h' }, `⚠️ Overdue (${overdue.length})`),
       h('div', { class: 'wk-chips' }, overdue.sort((a, b) => a.iso.localeCompare(b.iso)).map((x) => h('span', { class: 'chip due-over' }, x.ico, ' ', x.text, ' · ', x.unverified ? 'verify' : `${D().daysBetween(x.iso, t)}d`)))) : null;
     const list = h('ol', { class: 'wk-days' }, days.map((iso, i) => {
-      const its = items.filter((x) => x.iso === iso).sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0));
+      const its = items.filter((x) => x.iso === iso);
       const hb = window.Habits && window.Habits.dueOn ? window.Habits.dueOn(iso) : null;
       return h('li', { class: 'wk-day' + (i === 0 ? ' today' : '') + (new Date(iso + 'T00:00:00Z').getUTCDay() % 6 === 0 ? ' wkend' : '') },
         h('div', { class: 'wk-dh' }, h('strong', null, i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : fmtD(iso, { day: undefined, month: undefined, weekday: 'long' })), h('span', { class: 'muted small' }, fmtD(iso, { weekday: undefined }))),
-        its.length ? h('ul', { class: 'wk-items' }, its.map((x) => h('li', { class: `wk-it k-${x.kind}${x.done ? ' done' : ''}` }, h('span', { class: 'wk-ico', 'aria-hidden': 'true' }, x.ico), h('span', null, x.text, x.approx ? h('span', { class: 'muted small' }, ' (approx)') : null), x.local ? h('span', { class: 'chip local' }, '✎') : null))) : null,
+        its.length ? h('ul', { class: 'wk-items' }, its.map((x) => h('li', { class: `wk-it k-${x.kind}` }, h('span', { class: 'wk-ico', 'aria-hidden': 'true' }, x.ico), h('span', null, x.text, x.approx ? h('span', { class: 'muted small' }, ' (approx)') : null), x.local ? h('span', { class: 'chip local' }, '✎') : null))) : null,
         hb && hb.length ? h('p', { class: 'wk-hb' }, `🌸 ${hb.length} habit${hb.length > 1 ? 's' : ''}: `, hb.map((x) => x.emoji).join(' ')) : null,
         !its.length && !(hb && hb.length) ? h('p', { class: 'wk-free muted small' }, 'Free day ✨') : null);
     }));
@@ -271,15 +272,18 @@
     const mpat = Array.isArray(d.mpat_log ?? d.mpat) ? (d.mpat_log ?? d.mpat).filter((x) => x && inW(isoOf(x.date))).length : null;
     const wins = objs(d.wins, 'text').map((w) => ({ iso: isoOf(w.date), text: pick(w, 'text', 'win', 'title') })).filter((w) => w.text);
     const wk = wins.filter((w) => !w.iso || inW(w.iso)), older = wins.filter((w) => w.iso && w.iso < ws).sort((a, b) => b.iso.localeCompare(a.iso));
+    const winTxt = wk.map((w) => D().normT(w.text)).join(' | ');
+    const doneUniq = doneList.filter((x) => { const n = D().normT(x.text.replace(/ paid$/, '')); return n && !winTxt.includes(n); }); // a win already says it
     const tile = (v, l, cls) => h('div', { class: `m-stat ${cls || ''}` }, h('span', { class: 'm-stat-v' }, v), h('span', { class: 'm-stat-l' }, l));
     const tiles = h('div', { class: 'm-stats rv-stats' },
       tile(hs && hs.pct != null ? Math.round(hs.pct * 100) + '%' : '—', '🌸 Habits (week)', 'm-paid'), tile(hs ? String(hs.perfect) : '—', '💯 Perfect days', 'm-unver'),
       mpat != null ? tile(String(mpat), '✈️ MPAT sessions', 'm-gross') : null, tile(String(tasks), '🎖️ Taskings done', 'm-unpaid'), tile(String(paid), '💳 Bills paid', 'm-paid'));
     const sec = (title, xs) => (xs.length ? [h('p', { class: 'm-h' }, title), h('ul', { class: 'bullets' }, xs.map((x) => h('li', null, x)))] : null);
+    const nW = wk.length + doneUniq.length;
     const body = [tiles,
-      h('p', { class: 'm-h' }, '🏆 Wins this week'),
-      wk.length || doneList.length ? h('ul', { class: 'rv-wins' }, wk.map((w) => h('li', null, '🏆 ', w.text, w.iso ? h('span', { class: 'muted small' }, ' · ' + fmtD(w.iso)) : null)),
-        doneList.map((x) => h('li', { class: 'rv-done' }, x.ico, ' ', x.text, x.local ? h('span', { class: 'chip local' }, '✎ this device') : null))) : D().empty('Log a win — small ones count. 🌱'),
+      nW ? h('details', { class: 'm-fold', id: 'rv-wins' }, h('summary', null, h('span', null, `🏆 Wins & done this week (${nW})`)),
+        h('ul', { class: 'rv-wins' }, wk.map((w) => h('li', null, '🏆 ', w.text, w.iso ? h('span', { class: 'muted small' }, ' · ' + fmtD(w.iso)) : null)),
+          doneUniq.map((x) => h('li', { class: 'rv-done' }, x.ico, ' ', x.text, x.local ? h('span', { class: 'chip local' }, '✎ this device') : null)))) : D().empty('Log a win — small ones count. 🌱'),
       older.length ? h('details', { class: 'm-fold' }, h('summary', null, h('span', null, `Earlier wins (${older.length})`)), h('ul', { class: 'bullets' }, older.slice(0, 20).map((w) => h('li', null, w.text, h('span', { class: 'muted small' }, ' · ' + fmtD(w.iso)))))) : null,
       wr ? sec('✨ Highlights', lines(wr.highlights)) : null, wr ? sec('📘 Lessons', lines(wr.lessons)) : null, wr ? sec('🎯 Next focus', lines(wr.next_focus)) : null];
     return card('lav', '🏆', 'Weekly review', body, { sub: `${wr && D().str(wr.week) ? D().str(wr.week) + ' · ' : ''}${fmtD(ws, { weekday: undefined })} – ${fmtD(we, { weekday: undefined })}` });
@@ -325,7 +329,17 @@
     const pftEl = pft ? h('div', { class: 'hl-pft' }, h('p', { class: 'm-h' }, '🏃 PFT ', pftDi ? h('span', { class: `chip ${pftDi.cls}` }, pftDi.label) : null),
       objs(pft.events, 'name').length ? h('table', { class: 'hl-tbl' }, h('thead', null, h('tr', null, h('th', null, 'Event'), h('th', null, 'Target'), h('th', null, 'Latest'))),
         h('tbody', null, objs(pft.events, 'name').map((e) => h('tr', null, h('td', null, pick(e, 'name', 'event')), h('td', null, pick(e, 'target', 'goal') || '—'), h('td', null, pick(e, 'latest', 'last', 'current') || '—'))))) : null) : null;
-    // quick log (overlay)
+    const ex = exerciseBlock(d);
+    return card('aqua', '💪', 'Health & rest', h('div', { class: 'hl-grid' },
+      h('div', { class: 'hl-col' }, tiles, chart('😴 Sleep (hours)', sleep.slice(-14), { ref: 7, fmt: (v) => v + ' h', label: 'Sleep hours, last entries', color: '#5b6fd6', unit: 'night' }),
+        chart('⚖️ Weight (kg)', weight.slice(-20), { fmt: (v) => v + ' kg', label: 'Weight trend', color: '#17a28f', unit: 'entry' })),
+      h('div', { class: 'hl-col' }, ex, pftEl, pick(hh, 'notes', 'note') ? h('p', { class: 'm-note' }, '📝 ', pick(hh, 'notes', 'note')) : null,
+        h('p', { class: 'small muted' }, 'Log sleep, weight and exercise on 🏠 Today → Update → Health. Pink dots = pending sync. Dashed line = 7 h.'))), { wide: true, sub: 'Read-only · from your health log' });
+  }
+  // Health quick log (rendered inside Today → Update; the Health card itself is read-only on Goals)
+  function healthLogForm() {
+    const { h, num } = D();
+    const t = today();
     const dIn = h('input', { type: 'date', id: 'hl-date', value: t, max: t, 'aria-label': 'Date' });
     const sIn = h('input', { type: 'number', id: 'hl-sleep', inputmode: 'decimal', step: '0.25', min: '0', max: '16', placeholder: 'Sleep h', 'aria-label': 'Sleep hours' });
     const wIn = h('input', { type: 'number', id: 'hl-weight', inputmode: 'decimal', step: '0.1', min: '20', max: '300', placeholder: 'Weight kg', 'aria-label': 'Weight kg' });
@@ -344,12 +358,7 @@
     } }, h('p', { class: 'm-h' }, '📝 Quick log'),
       h('div', { class: 'hl-row' }, dIn, sIn, wIn),
       h('div', { class: 'hl-row hl-ex' }, h('span', { class: 'hl-ex-l', 'aria-hidden': 'true' }, '🏃'), exT, exM, h('button', { type: 'submit', class: 'qc-add', id: 'hl-submit' }, 'Log')));
-    const ex = exerciseBlock(d);
-    return card('aqua', '💪', 'Health & rest', h('div', { class: 'hl-grid' },
-      h('div', { class: 'hl-col' }, tiles, chart('😴 Sleep (hours)', sleep.slice(-14), { ref: 7, fmt: (v) => v + ' h', label: 'Sleep hours, last entries', color: '#5b6fd6', unit: 'night' }),
-        chart('⚖️ Weight (kg)', weight.slice(-20), { fmt: (v) => v + ' kg', label: 'Weight trend', color: '#17a28f', unit: 'entry' })),
-      h('div', { class: 'hl-col' }, ex, pftEl, pick(hh, 'notes', 'note') ? h('p', { class: 'm-note' }, '📝 ', pick(hh, 'notes', 'note')) : null),
-      h('div', { class: 'hl-col' }, form, h('p', { class: 'small muted' }, 'Pink dots = logged on this device (pending sync). Dashed line = 7 h. Exercise minutes also count toward the 🏃 Exercise habit.'))), { wide: true });
+    return h('div', { class: 'hl-wrap' }, form, h('p', { class: 'small muted' }, 'Exercise minutes also count toward the 🏃 Exercise habit.'));
   }
   /* ---- exercise log (notes.json health.exercise[] + phone edits) ---- */
   function logExercise(date, type, minutes) {
@@ -382,9 +391,11 @@
   /* ================= Quick notes (notes.json `quick_notes` + local) ================= */
   function quickNotesCard(d) {
     const { h, card, objs, pick } = D();
-    const xs = objs(d.quick_notes, 'text').filter((x) => pick(x, 'text', 'note', 'item'));
+    const xs = objs(d.quick_notes, 'text').filter((x) => pick(x, 'text', 'note', 'item') && !x.done).slice().reverse();
     if (!xs.length) return null;
-    return card('lilac', '🗒️', 'Quick notes', h('ul', { class: 'bullets' }, xs.slice().reverse().map((x) => h('li', null, pick(x, 'text', 'note', 'item'), isoOf(x.date) ? h('span', { class: 'muted small' }, ' · ' + fmtD(isoOf(x.date))) : null, localChip(x)))), { badge: xs.length });
+    const li = (x) => h('li', null, pick(x, 'text', 'note', 'item'), isoOf(x.date) ? h('span', { class: 'muted small' }, ' · ' + fmtD(isoOf(x.date))) : null, localChip(x));
+    return card('lilac', '🗒️', 'Notes', [h('ul', { class: 'bullets' }, xs.slice(0, 4).map(li)),
+      xs.length > 4 ? h('details', { class: 'm-fold' }, h('summary', null, h('span', null, `Older notes (${xs.length - 4})`)), h('ul', { class: 'bullets' }, xs.slice(4).map(li))) : null], { badge: xs.length });
   }
 
   /* ================= Links (notes.json `links` + phone edits via the Outbox) ================= */
@@ -493,9 +504,9 @@
   }
 
   /* ================= Search ================= */
-  const KEY_CARD = { today: 'c-schedule', schedule: 'c-schedule', todo: 'c-todo', todos: 'c-todo', taskings: 'c-taskings', tasks: 'c-taskings', reminders: 'c-reminders', duty_log: 'c-duty', duty: 'c-duty',
+  const KEY_CARD = { today: 'c-todo', schedule: 'c-todo', todo: 'c-todo', todos: 'c-todo', taskings: 'c-taskings', tasks: 'c-taskings', reminders: 'c-todo', duty_log: 'c-wd1', duty: 'c-wd1',
     wd1: 'c-wd1', studies: 'c-studies', mmpa: 'c-studies', mpat_log: 'c-mpat', mpat: 'c-mpat', ideas: 'c-ideas', verse: 'c-hero', bills: 'm-bills', bills_outlook: 'm-bills', bills_summary: 'm-bills',
-    subscriptions: 'm-subscriptions', decisions: 'm-decisions', automations: 'm-automations', finance_tips: 'm-finance_tips', income: 'm-pay', debts: 'm-debts', balances: 'm-freecash',
+    subscriptions: 'm-subscriptions', decisions: 'm-decisions', automations: 'm-automations', finance_tips: 'm-finance_tips', income: 'm-pay', debts: 'm-debts', balances: 'm-pay',
     wins: 'c-review', weekly_review: 'c-review', goals: 'c-goals', health: 'c-health', quick_notes: 'c-quick_notes', links: 'c-links', finance: 'c-savings', va: 'c-va', transactions: 'm-txlog' };
   const SKIP = new Set(['updated', 'version', 'schema', 'habits']);
   function buildIndex(d) {
@@ -553,11 +564,12 @@
   function jumpTo(cardId, terms) {
     const el = document.getElementById(cardId);
     if (!el) { toast('That section is not on the board'); return; }
-    go(el.dataset.sec || 'today');
+    const host = el.closest('#board > *') || el; // merged cards: the id may sit on a block inside a card
+    go(host.dataset.sec || 'today');
     el.querySelectorAll('details').forEach((x) => { if (terms.some((w) => x.textContent.toLowerCase().includes(w))) x.open = true; });
     highlightIn(el, terms);
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+    host.classList.remove('flash'); void host.offsetWidth; host.classList.add('flash');
   }
   function highlightIn(el, terms) {
     if (!(window.CSS && CSS.highlights && window.Highlight)) return;
@@ -571,7 +583,8 @@
   }
 
   /* ================= section nav ================= */
-  const SECTIONS = [['today', '🏠', 'Today'], ['week', '🗓️', 'Week'], ['money', '💰', 'Money'], ['goals', '🎯', 'Goals'], ['health', '💪', 'Health'], ['links', '🔗', 'Links'], ['search', '🔍', 'Search']];
+  const SECTIONS = [['today', '🏠', 'Today'], ['week', '🗓️', 'Week'], ['money', '💰', 'Money'], ['goals', '🎯', 'Goals'], ['links', '🔗', 'Links'], ['search', '🔍', 'Search']];
+  const ALIAS = { health: 'goals' }; // old deep links (#health) → the read-only Health card now lives on Goals
   function navEl() {
     const nav = document.getElementById('secnav');
     if (!nav) return null;
@@ -582,6 +595,7 @@
   }
   const h2 = (ico) => D().h('span', { class: 'sn-i', 'aria-hidden': 'true' }, ico);
   function go(sec) {
+    sec = ALIAS[sec] || sec;
     if (!SECTIONS.some((s) => s[0] === sec)) sec = 'today';
     view = sec;
     try { history.replaceState(null, '', sec === 'today' ? location.pathname + location.search : '#' + sec); } catch { /* file:// etc */ }
@@ -658,11 +672,10 @@
   function cards(d) {
     const safe = (fn, id) => { try { const el = fn(d); if (el) el.id = id; return el; } catch (e) { console.error(e); return null; } };
     return {
-      todayTop: [safe(captureCard, 'c-capture')],
       todayEnd: [ready() && (pending() || lockedOld || clearedNote) ? safe(outboxCard, 'c-outbox') : null],
       todayMid: [safe(quickNotesCard, 'c-quick_notes')],
       week: [safe(weekCard, 'c-week'), safe(reviewCard, 'c-review')],
-      health: [safe(healthCard, 'c-health')],
+      goals: [safe(healthCard, 'c-health')],
       links: [safe(linksCard, 'c-links')],
       search: [safe(searchCard, 'c-search')],
     };
@@ -707,6 +720,6 @@
     if (changed) D().rerender();
     return changed;
   }
-  window.Features = { syncPayload, syncApply, unlock, lock, ready, merge, cards, afterRender, set, undo, add, logHealth, logExercise, saveLink, deleteLink, localChip, pending, go, layout,
+  window.Features = { syncPayload, syncApply, unlock, lock, ready, merge, cards, afterRender, set, undo, add, logHealth, logExercise, saveLink, deleteLink, localChip, pending, go, layout, captureEl, healthLogForm,
     recAdd, recSet, recDel, setProgress, logVaDaily, logEntry, toast, exerciseByDay, pendingEdits: () => (O ? O.edits.slice() : []), raw: () => raw, _flush: () => saving, _tick: tickPings };
 })();

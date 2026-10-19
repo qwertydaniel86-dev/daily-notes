@@ -54,7 +54,6 @@ ul{list-style:none;margin:0;padding:0}
 .hero-date{margin:0 0 .5rem;font-weight:800;font-size:1.2rem}
 .verse{margin:0 0 .5rem;font-size:1.02rem;font-style:italic;line-height:1.5}
 .verse cite{font-style:normal;font-weight:700}
-.tag{margin:0 0 .25rem;font-size:.85rem;font-weight:600;color:#7a5b00}
 
 /* chips */
 .chip{display:inline-flex;align-items:center;gap:.2rem;font-size:.75rem;font-weight:600;background:rgba(255,255,255,.75);border-radius:999px;padding:.12rem .55rem;margin-left:.35rem;white-space:nowrap}
@@ -567,17 +566,43 @@ button.tiny.ghost{background:rgba(255,255,255,.85);color:var(--ink);border:1px s
 .gl-why{margin:.25rem 0 0;padding-left:1.1rem;color:var(--muted)}
 .gl-why li{padding:.08rem 0}
 .hp-list{list-style:none;margin:0;padding:0;display:grid;gap:.55rem}
-.ro-checks{list-style:none;margin:.4rem 0 0;padding:0;display:grid;gap:.2rem;font-size:.9rem}
-.ro-checks li.done{color:var(--muted)}
 .va-tbl{width:100%}
-.va-trend{display:grid;grid-template-columns:repeat(14,1fr);gap:3px;height:56px;align-items:end;margin:.2rem 0 .5rem}
-.va-day{position:relative;height:100%;background:rgba(0,0,0,.04);border-radius:5px;display:flex;align-items:flex-end;overflow:hidden}
-.va-day.today{outline:2px solid #f3a5c0}
-.va-b{display:block;width:100%;background:#9ccdf5;border-radius:5px 5px 0 0}
-.va-r{position:absolute;left:25%;right:25%;bottom:0;background:#3c6fd1;border-radius:4px 4px 0 0}
 .va-st{font-weight:700}
 .va-interview{background:#fff0c2}.va-offer{background:#ffd9e8}.va-hired{background:#d6f5df}.va-lost{background:#eee;color:var(--muted)}
 .va-hot{list-style:none;margin:.4rem 0;padding:0;display:grid;gap:.25rem}
 .va-hot li{background:#fff3f7;border:1px solid #f3a5c0;border-radius:12px;padding:.35rem .55rem}
 .pg-sheet-h{display:flex;justify-content:space-between;align-items:center;margin:.3rem 0 .6rem}
 .hb-ctls{display:flex;align-items:center;gap:.3rem;flex:none}
+
+/* ================= Simplify (Oct 2026): merged cards, done folds, compact goals ================= */
+.hero-grid{display:grid;gap:.6rem 1.2rem}
+@media (min-width:1100px){.hero-grid{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);align-items:start}}
+.hero-cap{background:rgba(255,255,255,.55);border-radius:16px;padding:.6rem .7rem;min-width:0}
+.hero-cap .m-h{margin-top:0}
+.hero-cap .small{margin:.35rem 0 0}
+.hero-alert{margin:.2rem 0 .3rem;font-weight:700;color:#a3271f}
+.tl-h{margin:.55rem 0 .2rem}
+.card .tl-h:first-of-type{margin-top:0}
+.tl-tom{margin:.2rem 0 .3rem}
+.rem-it{display:flex;align-items:flex-start;gap:.4rem;justify-content:space-between}
+.rem-it .rem-t{flex:1;min-width:0}
+.rem-it.done .rem-t{text-decoration:line-through;color:var(--muted)}
+.rem-done{flex:none;padding:.1rem .55rem}
+.done-fold{margin-top:.5rem;background:rgba(255,255,255,.4)}
+.done-fold summary{font-weight:600;color:var(--muted)}
+.task-meta .task-notes{flex-basis:100%;font-size:.82rem}
+.m-free{background:rgba(255,255,255,.45);border-radius:14px;padding:.5rem .7rem;margin:.5rem 0}
+.m-free-h{margin-top:0}
+.m-subs{margin-top:.6rem}
+.gl-blk{margin:.35rem 0 .2rem;display:grid;gap:.3rem}
+.gl-crit .meter-top{font-size:.86rem}
+.bar.thin{height:.45rem}
+.gl-crit.met .meter-top{color:#16733f}
+.gl-chips{display:flex;flex-wrap:wrap;gap:.25rem}
+.gl-chips .chip{margin:0}
+.gl-link{display:inline-block;margin-top:.3rem;font-size:.85rem;font-weight:700;color:#1d4f86;text-decoration:none}
+.gl-link:hover{text-decoration:underline}
+.gl-hold{margin-top:.6rem;background:rgba(255,255,255,.45);border-radius:14px;padding:.5rem .7rem}
+.gl-hold .m-h{margin-top:0}
+.gl-hold .gl-link{margin:0 0 0 .2rem}
+.gl-list{grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));align-items:start}
