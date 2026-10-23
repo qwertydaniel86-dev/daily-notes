@@ -15,7 +15,6 @@
     { id: 'seed-prayer', name: 'Prayer', emoji: '🙏', color: 'lav', type: 'count', target: 3, unit: 'times' },
     { id: 'seed-exercise', name: 'Exercise', emoji: '🏃', color: 'mint', type: 'timer', target: 30, unit: 'min', frequency: { times_per_week: 4 } },
     { id: 'seed-mmpa', name: 'Study MMPA', emoji: '📚', color: 'lemon', type: 'timer', target: 45, unit: 'min', frequency: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] },
-    { id: 'seed-mpat', name: 'MPAT practice', emoji: '✈️', color: 'sky', type: 'count', target: 10, unit: 'times' },
     { id: 'seed-water', name: 'Water', emoji: '💧', color: 'aqua', type: 'count', target: 8, unit: 'glasses' },
     { id: 'seed-sleep', name: 'Sleep by 2300', emoji: '😴', color: 'lilac', reminder: '22:30' },
   ];
@@ -113,7 +112,7 @@
   function freshState(notes) {
     const s = normState({});
     const fromNotes = notesDefs(notes);
-    s.habits = fromNotes.length ? fromNotes : SEEDS.map((x) => normHabit(x, x.id));
+    s.habits = (fromNotes.length ? fromNotes : SEEDS.map((x) => normHabit(x, x.id))).filter((x) => !isMpat(x));
     fromNotes.forEach((n) => (s.known[n.id] = 1));
     s.known._seeded = 1; s.known._mig_targets_v2 = today();
     return s;
@@ -121,7 +120,7 @@
   function mergeNotes(notes) {
     let changed = false;
     for (const n of notesDefs(notes)) {
-      if (S.known[n.id]) continue;
+      if (S.known[n.id] || isMpat(n)) continue;
       S.known[n.id] = 1; changed = true;
       if (S.habits.some((x) => x.id === n.id || x.name.toLowerCase() === n.name.toLowerCase())) continue;
       S.habits.push(n);
@@ -140,8 +139,19 @@
     hs.sort((a, b) => str(a.until).localeCompare(str(b.until)));
     RC = {};
   }
+  // MPAT is tracked only by the 📡 Auto-synced card (pulled from the MPAT app) – no manual habit counter.
+  const isMpat = (x) => x && (x.id === 'seed-mpat' || /\bmpat\b/i.test(x.name || ''));
+  function dropMpat() {
+    if (!S) return false;
+    const n = S.habits.length;
+    S.habits = S.habits.filter((x) => !isMpat(x));
+    if (S.habits.length === n) return false;
+    S.known._mig_no_mpat = today(); RC = {};
+    return true;
+  }
   function migrate() {
-    if (!S || S.known._mig_targets_v2) return false;
+    const dropped = dropMpat();
+    if (!S || S.known._mig_targets_v2) return dropped;
     const t = today();
     const find = (id, re) => S.habits.find((x) => x.id === id) || S.habits.find((x) => re.test(x.name));
     const fix = (hb, target) => {
@@ -150,7 +160,6 @@
       hb.type = 'count'; hb.target = target; hb.unit = 'times'; hb.freq = { type: 'daily' };
     };
     fix(find('seed-prayer', /^prayer\b/i), 3);
-    fix(find('seed-mpat', /\bmpat\b/i), 10);
     S.known._mig_targets_v2 = t; RC = {};
     return true;
   }
