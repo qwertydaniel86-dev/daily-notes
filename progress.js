@@ -151,12 +151,6 @@
     if (!f) return null;
     legacyStudyTicks(d);
     const sec = (ico, title, kids, cls) => h('section', { class: 'pg-sec' + (cls ? ' ' + cls : '') }, h('h3', { class: 'pg-h' }, ico + ' ' + title), kids);
-    // VA outreach (today)
-    const vd = vaDaily(d), td = vd[t] || { sent: 0, replies: 0 }, ws = weekStart(t);
-    let wS = 0, wR = 0; Object.entries(vd).forEach(([k, x]) => { if (k >= ws && k <= t) { wS += x.sent; wR += x.replies; } });
-    const va = sec('💼', 'Work applications · today', [
-      h('div', { class: 'pg-ctrs' }, counter('Sent', td.sent, (n) => f.logVaDaily(t, n, td.replies), 'va-sent'), counter('Replies', td.replies, (n) => f.logVaDaily(t, td.sent, n), 'va-replies')),
-      h('p', { class: 'small muted' }, `This week: ${wS} sent · ${wR} repl${wR === 1 ? 'y' : 'ies'}${wS ? ` · ${Math.round((wR / wS) * 100)}% reply rate` : ''}`)]);
     // leads
     const leads = leadsOf(d), active = leads.filter((x) => x.v.status !== 'Lost');
     const leadSec = sec('🤝', 'Significant leads', [
@@ -167,35 +161,11 @@
         h('button', { type: 'button', class: 'icon', 'aria-label': 'Edit lead: ' + x.v.name, onclick: () => { const cl = sheet('✎ Edit lead', leadForm(x.it, () => cl()), 'ld-sheet'); } }, '✎')))) : h('p', { class: 'small muted' }, 'No leads yet.'),
       leads.length > active.length ? h('p', { class: 'small muted' }, `${leads.length - active.length} lost lead${leads.length - active.length > 1 ? 's' : ''} hidden`) : null,
       h('button', { type: 'button', class: 'tiny', id: 'ld-add', onclick: () => { const cl = sheet('🤝 Significant lead', leadForm(null, () => cl()), 'ld-sheet'); } }, '＋ Significant lead')]);
-    // WD1
-    const rows = wd1Rows(d);
-    const wForm = rows.length ? h('form', { class: 'pg-form', id: 'wd1-form', novalidate: true, onsubmit: (e) => {
-      e.preventDefault();
-      let n = 0, bad = '';
-      rows.forEach((r) => { const el = wForm.querySelector(`[data-k="${r.k}"]`), s = el.value.trim(), v = s === '' ? null : num(s);
-        if (s !== '' && (v == null || v < 0)) { bad = r.label; return; }
-        const vv = v == null ? null : Math.round(v * 100) / 100;
-        if (vv !== r.cur) { f.setProgress('wd1.' + r.k, vv); n++; } });
-      toast(bad ? `⚠️ ${bad}: enter a number` : n ? `🛫 WD1 updated (${n}) – syncing via the Outbox` : 'No change');
-    } }, h('div', { class: 'pg-grid2' }, rows.map((r) => field(`${r.ico} ${r.label}${r.req != null ? ` (of ${fmtNum(r.req)}${r.unit ? ' ' + r.unit : ''})` : ''}`,
-      h('input', { type: 'number', inputmode: 'decimal', step: 'any', min: '0', 'data-k': r.k, id: 'wd1-' + r.k, value: r.cur == null ? '' : String(r.cur), placeholder: 'not set' })))),
-      h('button', { type: 'submit', class: 'qc-add', id: 'wd1-save' }, 'Save WD1')) : h('p', { class: 'small muted' }, 'No WD1 tracker in notes yet.');
-    const wdSec = sec('🛫', 'WD1 tracker', wForm);
     // MMPA ticks
     const st = studies(d), nd = st.items.filter((x) => x.done).length;
     const mmSec = sec('📚', `MMPA checklist · ${nd}/${st.items.length}`, st.items.length ? h('ul', { class: 'checks pg-checks' }, st.items.map((x, i) => h('li', { class: x.done ? 'done' : '' },
       h('input', { type: 'checkbox', id: 'mm-' + i, checked: x.done || null, onchange: (e) => f.set({ sec: 'studies', op: 'done', item: x.it, label: x.label, val: e.target.checked }) }),
       h('label', { for: 'mm-' + i }, x.label, x.local ? h('span', { class: 'chip local' }, '✎') : null)))) : h('p', { class: 'small muted' }, 'No subjects listed yet.'));
-    // MPAT log entry
-    const mD = h('input', { type: 'date', id: 'mp-date', value: t, max: t }), mA = h('input', { type: 'text', id: 'mp-area', maxlength: '60', placeholder: 'Area (e.g. Spatial)' });
-    const mS = h('input', { type: 'text', id: 'mp-score', maxlength: '20', placeholder: 'Score' }), mT = h('input', { type: 'text', id: 'mp-time', maxlength: '20', placeholder: 'Time' });
-    const mN = h('input', { type: 'text', id: 'mp-notes', maxlength: '300', placeholder: 'Notes / weak spots' });
-    const mpSec = sec('✈️', 'MPAT practice log', h('form', { class: 'pg-form', id: 'mp-form', novalidate: true, onsubmit: (e) => {
-      e.preventDefault();
-      const v = C.mpatVal({ date: mD.value || t, area: mA.value.trim(), score: mS.value.trim(), time: mT.value.trim(), notes: mN.value.trim() });
-      if (!v || !(v.area || v.score || v.time || v.notes)) { toast('Add an area, score, time or note'); return; }
-      f.logEntry('mpat_log', v, `${v.date} ${v.area || ''}`.trim()); toast('✈️ Practice logged – syncing via the Outbox');
-    } }, h('div', { class: 'pg-grid2' }, mD, mA, mS, mT), mN, h('button', { type: 'submit', class: 'qc-add', id: 'mp-save' }, 'Log session')));
     // savings
     const sv = savingsOf(d);
     const sIn = h('input', { type: 'number', id: 'sv-total', inputmode: 'decimal', step: 'any', min: '0', placeholder: 'Total savings ₱', value: num(fin(d).savingsTotal) == null ? '' : String(num(fin(d).savingsTotal)) });
@@ -206,10 +176,8 @@
       f.setProgress('finance.savingsTotal', v == null ? null : Math.round(v * 100) / 100); toast(v == null ? 'Savings total cleared' : '💰 Savings total saved – syncing via the Outbox');
     } }, h('div', { class: 'qc-row' }, sIn, h('button', { type: 'submit', class: 'qc-add', id: 'sv-save' }, 'Save')),
       h('p', { class: 'small muted' }, sv.cur != null ? `Now ${peso(sv.cur)}${sv.asOf ? ' · as of ' + fmtD(sv.asOf) : ''} (${sv.src})` : 'Current savings not set yet. All accounts combined; account names only, never numbers.')));
-    const au = isObj(d.auto) ? d.auto : {};
-    const opt = (el, on, why) => (on ? h('details', { class: 'pg-opt' }, h('summary', null, `✍️ Manual entry (optional) · ${why}`), el) : el);
-    return h('div', { class: 'pg-secs', id: 'c-progress' }, opt(va, !!au.work, 'auto from the tracker'), leadSec, mmSec,
-      opt(wdSec, !!au.abm, 'controls & hours auto from the ABM board'), opt(mpSec, !!(au.mpat && au.mpat.attempts), 'auto from the MPAT app'), svSec);
+    // Work applications, WD1 controls/hours and MPAT come only from the 📡 Auto-synced card (pulled from the sheets) – no manual entry.
+    return h('div', { class: 'pg-secs', id: 'c-progress' }, leadSec, mmSec, svSec);
   }
   /* ================= Today: one "Update" card – 💸 Money · 💪 Health · 📈 Progress (one pane at a time) ================= */
   let upPane = 'money';
@@ -404,7 +372,7 @@
   function vaBlock(d) {
     const { h } = D();
     const t = today(), s = vaStats(d, t), leads = leadsOf(d);
-    if (!s.all.sent && !s.all.replies && !leads.length) return h('div', { class: 'gl-blk', id: 'c-va' }, h('p', { class: 'small muted' }, '💼 No applications logged yet — counters on 🏠 Today → Update → Progress.'));
+    if (!s.all.sent && !s.all.replies && !leads.length) return h('div', { class: 'gl-blk', id: 'c-va' }, h('p', { class: 'small muted' }, '💼 No applications yet — pulled automatically from the Work Application Tracker.'));
     const rate = (x) => (x.sent ? `${Math.round((x.replies / x.sent) * 100)}%` : '—');
     const by = {}; leads.forEach((x) => { by[x.v.status] = (by[x.v.status] || 0) + 1; });
     const hot = leads.filter((x) => ['Interview', 'Offer'].includes(x.v.status));
