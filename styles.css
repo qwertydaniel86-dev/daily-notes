@@ -606,3 +606,26 @@ button.tiny.ghost{background:rgba(255,255,255,.85);color:var(--ink);border:1px s
 .gl-hold .m-h{margin-top:0}
 .gl-hold .gl-link{margin:0 0 0 .2rem}
 .gl-list{grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));align-items:start}
+
+/* Auto-synced card – one accent (--au), grouped sections, consistent tiles */
+#c-auto{--au:#3d7fd9}
+.au-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.8rem}
+.au-grp{background:rgba(255,255,255,.66);border:1px solid var(--line);border-radius:16px;padding:.75rem .85rem;display:grid;gap:.55rem;align-content:start;min-width:0}
+.au-h{display:flex;align-items:baseline;justify-content:space-between;gap:.5rem;flex-wrap:wrap}
+.au-h h3{margin:0;font-size:.95rem}
+.au-when{font-size:.7rem;color:var(--muted);font-weight:600}
+.au-stats{grid-template-columns:repeat(2,1fr);margin:0}
+.m-stat.au-t{--mc:var(--au,#3d7fd9)}
+.au-bar>span{background:var(--au,#3d7fd9)}
+.au-chips{display:flex;flex-wrap:wrap;gap:.3rem}
+.chip.au-chip{background:#eef4fd;color:#244a7c;border:1px solid #d5e3f7}
+.au-list{list-style:none;margin:0;padding:0;display:grid;gap:.15rem;font-size:.8rem}
+.au-list li{display:flex;justify-content:space-between;gap:.6rem;padding:.2rem 0;border-bottom:1px dashed var(--line)}
+.au-list li:last-child{border-bottom:0}
+.au-ell{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.au-st{color:var(--muted);white-space:nowrap;font-size:.74rem}
+.au-none{margin:0}
+.pg-opt{background:rgba(255,255,255,.45);border:1px dashed var(--line);border-radius:16px;padding:.45rem .7rem;min-width:0}
+.pg-opt>summary{cursor:pointer;font-size:.8rem;font-weight:700;color:var(--muted)}
+.pg-opt[open]>summary{margin-bottom:.45rem}
+.pg-opt>.pg-sec{border:0;padding:0;background:none}

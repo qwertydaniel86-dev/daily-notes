@@ -589,7 +589,7 @@
     return out;
   }
 
-  const KNOWN = new Set(['updated', 'verse', 'today', 'schedule', 'todo', 'todos', 'taskings', 'tasks', 'duty_log', 'duty', 'wd1', 'studies', 'mmpa', 'mmpa_exam_date', 'mpat_log', 'mpat', 'ideas', 'reminders', 'habits', 'version', 'schema',
+  const KNOWN = new Set(['updated', 'auto', 'verse', 'today', 'schedule', 'todo', 'todos', 'taskings', 'tasks', 'duty_log', 'duty', 'wd1', 'studies', 'mmpa', 'mmpa_exam_date', 'mpat_log', 'mpat', 'ideas', 'reminders', 'habits', 'version', 'schema',
     'bills', 'bills_summary', 'bills_outlook', 'subscriptions', 'decisions', 'automations', 'finance_tips', 'income', 'balances', 'debts',
     'wins', 'weekly_review', 'goals', 'health', 'quick_notes', 'links', 'finance', 'va', 'transactions']);
   function extraCards(d) {

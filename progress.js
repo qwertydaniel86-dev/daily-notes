@@ -206,7 +206,10 @@
       f.setProgress('finance.savingsTotal', v == null ? null : Math.round(v * 100) / 100); toast(v == null ? 'Savings total cleared' : '💰 Savings total saved – syncing via the Outbox');
     } }, h('div', { class: 'qc-row' }, sIn, h('button', { type: 'submit', class: 'qc-add', id: 'sv-save' }, 'Save')),
       h('p', { class: 'small muted' }, sv.cur != null ? `Now ${peso(sv.cur)}${sv.asOf ? ' · as of ' + fmtD(sv.asOf) : ''} (${sv.src})` : 'Current savings not set yet. All accounts combined; account names only, never numbers.')));
-    return h('div', { class: 'pg-secs', id: 'c-progress' }, va, leadSec, mmSec, wdSec, mpSec, svSec);
+    const au = isObj(d.auto) ? d.auto : {};
+    const opt = (el, on, why) => (on ? h('details', { class: 'pg-opt' }, h('summary', null, `✍️ Manual entry (optional) · ${why}`), el) : el);
+    return h('div', { class: 'pg-secs', id: 'c-progress' }, opt(va, !!au.work, 'auto from the tracker'), leadSec, mmSec,
+      opt(wdSec, !!au.abm, 'controls & hours auto from the ABM board'), opt(mpSec, !!(au.mpat && au.mpat.attempts), 'auto from the MPAT app'), svSec);
   }
   /* ================= Today: one "Update" card – 💸 Money · 💪 Health · 📈 Progress (one pane at a time) ================= */
   let upPane = 'money';
@@ -499,11 +502,52 @@
   }
   if (window.Features) window.Features.openExerciseLog = openExerciseLog;
 
+
+  /* ================= Today: 📡 Auto-synced – controls/ABM, MPAT and work applications (read-only, filled at publish) ================= */
+  function autoCard(d) {
+    const { h, card, fmtNum } = D();
+    const a = isObj(d.auto) ? d.auto : null;
+    if (!a) return null;
+    const asOf = (iso) => { if (!iso) return ''; const t = new Date(iso); return isNaN(t) ? '' : 'as of ' + t.toLocaleString('en-GB', { timeZone: TZ, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' PHT'; };
+    const grp = (ico, title, when, kids, id) => h('section', { class: 'au-grp', id }, h('div', { class: 'au-h' }, h('h3', null, ico + ' ' + title), when ? h('span', { class: 'au-when' }, when) : null), kids);
+    const none = (msg) => h('p', { class: 'small muted au-none' }, msg);
+    const g = [];
+    // Controls & ABM
+    const ab = a.abm;
+    if (ab) {
+      const c = ab.controls || {}, r = ab.radar || {}, w = isObj(d.wd1) ? d.wd1 : {};
+      const lr = isObj(w.live) ? w.live.req : null, hr = isObj(w.hours) ? w.hours.req : null;
+      g.push(grp('✈️', 'Controls & ABM', asOf(ab.updated), [
+        h('div', { class: 'm-stats au-stats' }, tile(fmtNum(c.total ?? 0), `controls total${lr ? ` · WD1 needs ${lr}` : ''}`, 'au-t'), tile(fmtNum(c.period ?? 0), `controls ${c.from ? fmtD(c.from, { weekday: undefined }) + '–' + fmtD(c.to, { weekday: undefined }) : 'this period'}`, 'au-t'),
+          tile(fmtNum(r.total ?? 0), `ABM hours${hr ? ` · of ${fmtNum(hr)}` : ''}`, 'au-t'), tile(c.last ? fmtD(c.last) : '—', 'last control', 'au-t')),
+        lr ? bar(pct(c.total || 0, lr), 'Live controls toward WD1', 'au-bar') : null,
+        hr ? bar(pct(r.total || 0, hr), 'ABM hours toward WD1', 'au-bar') : null,
+        (c.days || []).length ? h('ul', { class: 'au-list' }, c.days.slice().reverse().slice(0, 5).map((x) => h('li', null, h('span', null, fmtD(x.date)), h('strong', null, `${fmtNum(x.n)} control${x.n === 1 ? '' : 's'}`)))) : none('No controls on the board this period.')], 'au-abm'));
+    } else g.push(grp('✈️', 'Controls & ABM', '', none('Not synced yet — Denx snapshots the ABM board each refresh.'), 'au-abm'));
+    // MPAT
+    const m = a.mpat;
+    if (m && m.attempts) {
+      g.push(grp('🎯', 'MPAT practice', asOf(m.updated), [
+        h('div', { class: 'm-stats au-stats' }, tile(String(m.valid7), 'valid sets · 7 days', 'au-t'), tile(m.avg7 != null ? m.avg7 + '%' : '—', 'avg score · 7 days', 'au-t'), tile(m.best != null ? m.best + '%' : '—', 'best score', 'au-t'), tile(String(m.valid), 'valid sets · all', 'au-t')),
+        (m.cats || []).length ? h('div', { class: 'au-chips' }, m.cats.map((x) => h('span', { class: 'chip au-chip' }, `${x.cat} · ${x.avg}% avg · ${x.n}×`))) : null,
+        (m.recent || []).length ? h('ul', { class: 'au-list' }, m.recent.slice(0, 5).map((x) => h('li', null, h('span', null, `${fmtD(x.date)} · ${x.cat}`), h('strong', null, x.pct != null ? x.pct + '%' : '—')))) : null], 'au-mpat'));
+    } else g.push(grp('🎯', 'MPAT practice', '', none('No attempts synced yet — scores flow in once the MPAT app reports them (see README → Auto-feeds).'), 'au-mpat'));
+    // Work applications
+    const w = a.work;
+    if (w) {
+      const K = { jobs: 'Jobs', faculty: 'Faculty', leads: 'VA leads' };
+      g.push(grp('💼', 'Work applications', asOf(w.updated), [
+        h('div', { class: 'm-stats au-stats' }, tile(String(w.today.sent), 'sent today', 'au-t'), tile(String(w.sent7), 'sent · 7 days', 'au-t'), tile(String(w.replies7), 'replies · 7 days', 'au-t'), tile(String(w.total), 'contacted · all', 'au-t')),
+        h('div', { class: 'au-chips' }, Object.entries(w.kinds || {}).map(([k, x]) => h('span', { class: 'chip au-chip' }, `${K[k] || k} · ${x.contacted}${x.replies ? ` · ${x.replies} repl${x.replies === 1 ? 'y' : 'ies'}` : ''}`))),
+        (w.recent || []).length ? h('ul', { class: 'au-list' }, w.recent.slice(0, 5).map((x) => h('li', null, h('span', { class: 'au-ell' }, [x.title, x.org].filter(Boolean).join(' · ')), h('span', { class: 'au-st' }, `${x.status} · ${fmtD(x.date, { weekday: undefined })}`)))) : null], 'au-work'));
+    } else g.push(grp('💼', 'Work applications', '', none('Not synced yet — Denx snapshots the Work Application Tracker each refresh.'), 'au-work'));
+    return card('sky', '📡', 'Auto-synced', h('div', { class: 'au-grid' }, g), { wide: true, sub: 'Filled automatically at every refresh · nothing to enter' });
+  }
   // Slots for app.js
   function cards(d) {
     const safe = (fn, id) => { try { const el = fn(d); if (el) el.id = id; return el; } catch (e) { console.error(e); return null; } };
     return {
-      today: [safe(updateCard, 'c-update')],
+      today: [safe(autoCard, 'c-auto'), safe(updateCard, 'c-update')],
       money: [safe(moneyLogCard, 'm-txlog')],
       goals: [safe(goalsCard, 'c-goals'), safe(habitProgressCard, 'c-habitprog')],
     };
