@@ -634,3 +634,14 @@ button.tiny.ghost{background:rgba(255,255,255,.85);color:var(--ink);border:1px s
 .pg-opt[open]>summary{margin-bottom:.45rem}
 .pg-opt>.pg-sec{border:0;padding:0;background:none}
 .chk.auto{display:inline-flex;align-items:center;justify-content:center;cursor:default}.chk.auto:active{transform:none}
+
+/* ===== Habits card fits at 390px (Oct 27): grid/flex children may shrink (min-width:0), the week strip shares the width ===== */
+.habits>*{min-width:0}
+.habits .hb-list{grid-template-columns:minmax(0,1fr)}
+.hb-row{min-width:0}
+.hb-row .stepper{flex-wrap:wrap;justify-content:flex-end;min-width:0}
+.week{min-width:0;gap:.1rem}
+.week .wd{flex:1 1 0;min-width:0}
+.week .wd svg{max-width:100%;height:auto}
+.week .wk-nav{flex:none;padding:.2rem .25rem}
+@media (max-width:430px){.hb-row:has(.hb-ctls){flex-wrap:wrap}.hb-row .hb-ctls{flex:1 1 100%;justify-content:flex-end}}
