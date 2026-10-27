@@ -14,7 +14,6 @@
     { id: 'seed-bible', name: 'Bible reading / devotion', emoji: '📖', color: 'sun', reminder: '05:30' },
     { id: 'seed-prayer', name: 'Prayer', emoji: '🙏', color: 'lav', type: 'count', target: 3, unit: 'times' },
     { id: 'seed-exercise', name: 'Exercise', emoji: '🏃', color: 'mint', type: 'timer', target: 30, unit: 'min', frequency: { times_per_week: 4 } },
-    { id: 'seed-mmpa', name: 'Study MMPA', emoji: '📚', color: 'lemon', type: 'timer', target: 45, unit: 'min', frequency: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] },
     { id: 'seed-water', name: 'Water', emoji: '💧', color: 'aqua', type: 'count', target: 8, unit: 'glasses' },
     { id: 'seed-sleep', name: 'Sleep by 2300', emoji: '😴', color: 'lilac', reminder: '22:30' },
   ];
@@ -112,7 +111,7 @@
   function freshState(notes) {
     const s = normState({});
     const fromNotes = notesDefs(notes);
-    s.habits = (fromNotes.length ? fromNotes : SEEDS.map((x) => normHabit(x, x.id))).filter((x) => !isMpat(x));
+    s.habits = (fromNotes.length ? fromNotes : SEEDS.map((x) => normHabit(x, x.id))).filter((x) => !isMpat(x) && !isGone(x));
     fromNotes.forEach((n) => (s.known[n.id] = 1));
     s.known._seeded = 1; s.known._mig_targets_v2 = today();
     return s;
@@ -120,7 +119,7 @@
   function mergeNotes(notes) {
     let changed = false;
     for (const n of notesDefs(notes)) {
-      if (S.known[n.id] || isMpat(n)) continue;
+      if (S.known[n.id] || isMpat(n) || isGone(n)) continue;
       S.known[n.id] = 1; changed = true;
       if (S.habits.some((x) => x.id === n.id || x.name.toLowerCase() === n.name.toLowerCase())) continue;
       S.habits.push(n);
@@ -139,19 +138,31 @@
     hs.sort((a, b) => str(a.until).localeCompare(str(b.until)));
     RC = {};
   }
-  // MPAT is tracked only by the 📡 Auto-synced card (pulled from the MPAT app) – no manual habit counter.
-  const isMpat = (x) => x && (x.id === 'seed-mpat' || /\bmpat\b/i.test(x.name || ''));
+  // 🎯 MPAT is an AUTO habit (id auto-mpat): it ticks itself on days Daniel answered MPAT questions in the MPAT Practice app or MPAT Trainer
+  // (auto.mpat, written at publish). There is no manual MPAT counter; any other MPAT habit (old seed-mpat, notes.json) is removed.
+  // Study MMPA is gone for good (Oct 2026) and is removed the same way.
+  const MPAT_ID = 'auto-mpat';
+  const isMpat = (x) => x && x.id !== MPAT_ID && (x.id === 'seed-mpat' || /\bmpat\b/i.test(x.name || ''));
+  const isGone = (x) => x && (x.id === 'seed-mmpa' || /\bmmpa\b|\blaw[\s-]*school\b/i.test(x.name || ''));
   function dropMpat() {
     if (!S) return false;
     const n = S.habits.length;
-    S.habits = S.habits.filter((x) => !isMpat(x));
+    S.habits = S.habits.filter((x) => !isMpat(x) && !isGone(x));
     if (S.habits.length === n) return false;
     S.known._mig_no_mpat = today(); RC = {};
     return true;
   }
+  function ensureMpat(m) {
+    if (!S || !m) return false;
+    const ds = Object.keys(m).filter((d) => m[d] > 0).sort();
+    if (!ds.length || S.habits.some((x) => x.id === MPAT_ID) || S.known._mpat_removed) return false;
+    const hb = normHabit({ id: MPAT_ID, name: 'MPAT practice', emoji: '✈️', color: 'sky', type: 'check', frequency: 'daily', created: ds[0] }, MPAT_ID);
+    S.habits.push(hb); RC = {};
+    return true;
+  }
   function migrate() {
-    const dropped = dropMpat();
-    if (!S || S.known._mig_targets_v2) return dropped;
+    const dropped = dropMpat() | ensureMpat(MEXT); // (non-short-circuit: both must run)
+    if (!S || S.known._mig_targets_v2) return !!dropped;
     const t = today();
     const find = (id, re) => S.habits.find((x) => x.id === id) || S.habits.find((x) => re.test(x.name));
     const fix = (hb, target) => {
@@ -174,7 +185,7 @@
     return hb;
   }
   // Extra minutes from the encrypted notes / phone edits (Health → exercise log) that count toward the Exercise habit.
-  let EXT = {}, EXT_SIG = '';
+  let EXT = {}, MEXT = null, EXT_SIG = '';
   const exHabit = () => (S ? S.habits.find((x) => !x.archived && x.id === 'seed-exercise') || S.habits.find((x) => !x.archived && /^exercise\b/i.test(x.name)) || null : null);
 
   /* ---------- state + encrypted persistence ---------- */
@@ -225,8 +236,8 @@
   /* ---------- scoring ---------- */
   const H = (id) => S.habits.find((x) => x.id === id);
   const raw = (id, d) => (S.log[d] && S.log[d][id]) || 0;
-  const extOf = (hb, d) => (EXT[d] && hb === exHabit() ? EXT[d] : 0);
-  const manual = (hb, d) => Math.max(0, raw(hb.id, d));
+  const extOf = (hb, d) => (hb.id === MPAT_ID ? (MEXT && MEXT[d] > 0 ? 1 : 0) : EXT[d] && hb === exHabit() ? EXT[d] : 0);
+  const manual = (hb, d) => (hb.id === MPAT_ID ? 0 : Math.max(0, raw(hb.id, d)));
   const val = (hb, d) => manual(hb, d) + extOf(hb, d);
   const isSkip = (hb, d) => raw(hb.id, d) < 0;
   const tgt = (hb, d) => ruleOf(hb, d).target;
@@ -301,6 +312,7 @@
 
   /* ---------- mutations ---------- */
   function setVal(hb, d, v) {
+    if (hb.id === MPAT_ID) return; // auto habit: ticks itself from the MPAT answers, never by hand
     v = Math.max(-1, Math.min(99999, Math.round(v)));
     const row = (S.log[d] = S.log[d] || {});
     if (v === 0) delete row[hb.id]; else row[hb.id] = v;
@@ -407,7 +419,10 @@
     if (isEx) { let wm = 0; for (let i = 0; i < 7; i++) wm += val(hb, addDays(ws, i)); meta.push(`${wm} min this wk`); }
     if (sk) meta.push('Skipped ⏭');
     let ctl;
-    if (hb.type === 'check') {
+    if (hb.id === MPAT_ID) {
+      meta.push('auto · from your MPAT answers');
+      ctl = h('span', { class: 'chk auto' + (dn ? ' on' : ''), role: 'img', 'aria-label': dn ? 'Practiced – ticked automatically' : 'Not practiced yet – ticks itself when you answer MPAT questions', 'data-fk': 'c-' + hb.id }, dn ? '✓' : '');
+    } else if (hb.type === 'check') {
       ctl = h('button', { type: 'button', class: 'chk' + (dn ? ' on' : ''), 'aria-pressed': String(dn), 'aria-label': (dn ? 'Undo ' : 'Check off ') + hb.name, 'data-fk': 'c-' + hb.id, onclick: () => toggle(hb, d) }, dn ? '✓' : '');
     } else {
       const shown = run ? v + Math.floor((Date.now() - run.start) / 60000) : v;
@@ -490,7 +505,7 @@
     return h('div', { class: 'detail', vars: { '--hc': HEX[hb.color] } },
       btn('‹ Back', () => { ui.view = 'stats'; paint(); }, 'ghost tiny', { 'data-fk': 'dback' }),
       h('div', { class: `det-head c-${hb.color}` }, h('span', { class: 'det-emoji' }, hb.emoji),
-        h('div', null, h('p', { class: 'det-name' }, hb.name), h('p', { class: 'muted small' }, [freqLabel(hb), goalLabel(hb), hb.reminder ? '⏰ ' + hb.reminder : ''].filter(Boolean).join(' · '))),
+        h('div', null, h('p', { class: 'det-name' }, hb.name), h('p', { class: 'muted small' }, [freqLabel(hb), goalLabel(hb), hb.reminder ? '🔔 ' + hb.reminder : ''].filter(Boolean).join(' · '))),
         h('span', { class: 'det-plant', title: 'Blossoms as your streak grows' }, PLANT(st.cur, st.unit))),
       h('div', { class: 'stat-grid' },
         h('div', { class: 'stat' }, h('span', { class: 'stat-v' }, `🔥 ${st.cur}${st.unit}`), h('span', { class: 'stat-l' }, 'Current streak')),
@@ -521,7 +536,7 @@
         btn(hb.archived ? '📤' : '🗄️', () => { hb.archived = !hb.archived; save(); paint(); }, 'icon', { 'aria-label': (hb.archived ? 'Restore ' : 'Archive ') + hb.name, 'data-fk': 'ar' + hb.id })))));
     const perm = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
     const notif = h('div', { class: 'mg-sec' },
-      h('h3', null, '⏰ Reminders'),
+      h('h3', null, '🔔 Reminders'),
       h('p', { class: 'muted small' }, 'Browser notifications fire at each habit’s reminder time (set it in Edit) — only while this page is open in a tab (it can be in the background). Not a push service: a closed tab or a sleeping phone gets nothing.'),
       perm === 'unsupported' ? h('p', { class: 'empty' }, 'Notifications are not supported in this browser (on iPhone: add to Home Screen first).')
         : h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: (S.settings.notify && perm === 'granted') || null, 'data-fk': 'notif', onchange: async (e) => {
@@ -624,11 +639,11 @@
       h('div', { class: 'field' }, h('span', null, 'Colour'), colors),
       h('div', { class: 'field' }, h('span', null, 'Goal type'), types), goalRow,
       h('div', { class: 'field' }, h('span', null, 'Frequency'), freqs, days, timesRow),
-      h('label', { class: 'field inline' }, '⏰ Reminder (optional) ', rem),
+      h('label', { class: 'field inline' }, '🔔 Reminder (optional) ', rem),
       err,
       h('div', { class: 'row-btns end' }, !isNew ? btn('🗑️ Delete', () => {
         if (!confirm(`Delete “${hb.name}” and all its history? (Archive keeps history.)`)) return;
-        S.habits = S.habits.filter((x) => x !== hb); for (const d of Object.keys(S.log)) { delete S.log[d][hb.id]; if (!Object.keys(S.log[d]).length) delete S.log[d]; }
+        if (hb.id === MPAT_ID) S.known._mpat_removed = today(); S.habits = S.habits.filter((x) => x !== hb); for (const d of Object.keys(S.log)) { delete S.log[d][hb.id]; if (!Object.keys(S.log[d]).length) delete S.log[d]; }
         save(); closeSheet(); ui.view = 'manage'; paint(); toast('Deleted');
       }, 'ghost danger') : null, btn('Cancel', closeSheet, 'ghost'), h('button', { type: 'submit' }, isNew ? 'Add habit' : 'Save')));
     syncGoal(); syncFreq();
@@ -735,7 +750,7 @@
     return differs;
   }
   // Exercise minutes per day from the exercise log ({ 'YYYY-MM-DD': minutes }); repaints only when it changed.
-  function setExternal(map) { const m = map && typeof map === 'object' ? map : {}; const sg = JSON.stringify(m); if (sg === EXT_SIG) return; EXT = m; EXT_SIG = sg; if (S && !sheetEl) paint(); }
+  function setExternal(map, mpat) { const m = map && typeof map === 'object' ? map : {}; const mp = mpat && typeof mpat === 'object' ? mpat : null; const sg = JSON.stringify([m, mp]); if (sg === EXT_SIG) return; EXT = m; MEXT = mp; EXT_SIG = sg; RC = {}; if (ensureMpat(mp)) save(true); if (S && !sheetEl) paint(); }
   // Read-only per-habit summary for the Goals tab.
   function summary() {
     if (!ready()) return [];

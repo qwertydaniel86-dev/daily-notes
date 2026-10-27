@@ -115,7 +115,14 @@
     D().objs(hh.exercise, 'date').forEach((x) => { const iso = isoOf(x.date), mn = D().num(x.minutes ?? x.min ?? x.duration); if (iso && mn != null && mn > 0) m[iso] = (m[iso] || 0) + Math.round(mn); });
     return m;
   }
-  function feedExercise(d) { if (window.Habits && window.Habits.setExternal && window.DN) { try { window.Habits.setExternal(exerciseByDay(d)); } catch (e) { console.warn(e); } } }
+  // Days Daniel answered MPAT questions (Practice app + Trainer, auto-fed at publish) → auto-ticks the MPAT habit. null = no feed yet.
+  function mpatByDay(d) {
+    const m = window.Progress && window.Progress.mpatAuto ? window.Progress.mpatAuto(d) : null;
+    if (!m) return null;
+    const o = {}; m.days.forEach((x) => { o[x.date] = x.answered; });
+    return o;
+  }
+  function feedExercise(d) { if (window.Habits && window.Habits.setExternal && window.DN) { try { window.Habits.setExternal(exerciseByDay(d), mpatByDay(d)); } catch (e) { console.warn(e); } } }
   /* Generic record edits (transactions, va.leads, links…): add / set / del through the Outbox. */
   const rawItemByKey = (sec, k) => { const i = C.findIndex(raw, { sec, key: k }); return i >= 0 ? C.listOf(raw, sec)[i] : null; };
   const pendingAddOf = (sec, it) => (it && it._local === 'added' && it.id ? O.edits.find((e) => e.sec === sec && e.op === 'add' && e.val && e.val.id === it.id) : null);
@@ -170,7 +177,7 @@
     const { h } = D();
     let kind = 'todo';
     const seg = h('div', { class: 'seg qc-seg', role: 'radiogroup', 'aria-label': 'Type' });
-    const kinds = [['todo', '✅ To-do'], ['reminder', '⏰ Reminder'], ['note', '🗒️ Note']];
+    const kinds = [['todo', '✅ To-do'], ['reminder', '🔔 Reminder'], ['note', '🗒️ Note']];
     kinds.forEach(([k, l]) => seg.append(h('button', { type: 'button', role: 'radio', 'aria-checked': String(k === kind), 'data-v': k, class: k === kind ? 'on' : '',
       onclick: (e) => { kind = k; seg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b === e.currentTarget); b.setAttribute('aria-checked', String(b === e.currentTarget)); }); } }, l)));
     const txt = h('input', { id: 'qc-text', type: 'text', placeholder: 'Type and add…', 'aria-label': 'Quick capture text', maxlength: '300', autocomplete: 'off' });
@@ -219,13 +226,14 @@
   }
 
   /* ================= collectors shared by Week / Review / pings ================= */
+  const realTime = (t) => (/^[\s—–\-·•.?]*$|^(?:n\/a|tbd|none|all[- ]day)$/i.test(t || '') ? '' : t); // a "—" placeholder must never lead a calendar line
   function datedItems(d) {
     const { str, pick, arr, statusOf, billRows, subRows, peso, isoDate } = D();
     const out = []; // {iso, ico, text, kind, done, key, cls, local}
-    arr(d.today ?? d.schedule).forEach((it) => { if (it && typeof it === 'object' && isoDate(it.date)) out.push({ iso: isoDate(it.date), ico: '🗓️', kind: 'event', text: [pick(it, 'time', 'when'), pick(it, 'item', 'event', 'title', 'text')].filter(Boolean).join(' '), local: it._local }); });
+    arr(d.today ?? d.schedule).forEach((it) => { if (it && typeof it === 'object' && isoDate(it.date)) out.push({ iso: isoDate(it.date), ico: '🗓️', kind: 'event', text: [realTime(pick(it, 'time', 'when')), pick(it, 'item', 'event', 'title', 'text')].filter(Boolean).join(' '), local: it._local }); });
     arr(d.taskings).forEach((it) => { if (typeof it !== 'object') return; const iso = isoDate(it.deadline ?? it.due); if (iso) out.push({ iso, ico: '🎖️', kind: 'tasking', text: pick(it, 'task', 'title', 'item'), done: statusOf(it.status).key === 'done', key: C.keyOf('taskings', it), local: it._local }); });
     arr(d.todo ?? d.todos).forEach((it) => { if (typeof it !== 'object') return; const iso = isoDate(it.due ?? it.deadline); if (iso) out.push({ iso, ico: '✅', kind: 'todo', text: pick(it, 'item', 'task', 'text', 'title'), done: !!it.done, key: C.keyOf('todo', it), local: it._local }); });
-    arr(d.reminders).forEach((it) => { const o = typeof it === 'string' ? { item: it } : it; const iso = isoDate(o && (o.due ?? o.date)); if (iso) out.push({ iso, ico: '⏰', kind: 'reminder', text: pick(o, 'item', 'text', 'title'), done: !!o.done, key: C.keyOf('reminders', o), local: o._local }); });
+    arr(d.reminders).forEach((it) => { const o = typeof it === 'string' ? { item: it } : it; const iso = isoDate(o && (o.due ?? o.date)); if (iso) out.push({ iso, ico: '🔔', kind: 'reminder', text: pick(o, 'item', 'text', 'title'), done: !!o.done, key: C.keyOf('reminders', o), local: o._local }); });
     billRows(d).forEach((r) => { if (r.dt && r.dt.iso) out.push({ iso: r.dt.iso, ico: '💳', kind: 'bill', text: `${pick(r.it, 'name', 'title') || 'Bill'} ${r.amount != null ? peso(r.amount) : ''}`.trim(), done: r.key === 'paid', unverified: r.key === 'unverified', key: C.keyOf('bills', r.it), local: r.it._local }); });
     subRows(d).forEach((r) => { if ((r.key === 'active' || r.key === 'other') && r.dt && r.dt.iso) out.push({ iso: r.dt.iso, ico: '🔄', kind: 'renewal', text: `${pick(r.it, 'name') || 'Subscription'} renews${r.php != null ? ' · ' + peso(r.php) : ''}`, approx: r.dt.text.startsWith('≈') }); });
     D().objs(d.goals, 'title').forEach((g) => { const iso = isoDate(g.target_date); if (iso) out.push({ iso, ico: '🎯', kind: 'goal', text: `Goal: ${pick(g, 'title', 'name')}`, done: (D().num(g.progress_pct) ?? 0) >= 100 }); });
@@ -269,7 +277,8 @@
     arr(d.taskings).forEach((it) => { if (it && typeof it === 'object' && statusOf(it.status).key === 'done' && !it._autodone && (!isoOf(it.done_on) || inW(isoOf(it.done_on)))) { tasks++; doneList.push({ ico: '🎖️', text: pick(it, 'task', 'title', 'item'), local: it._local }); } });
     let paid = 0;
     billRows(d).forEach((r) => { const po = isoOf(r.it.paid_on); if (r.key === 'paid' && (po ? inW(po) : r.dt && inW(r.dt.iso))) { paid++; doneList.push({ ico: '💳', text: `${pick(r.it, 'name') || 'Bill'} paid`, local: r.it._local }); } });
-    const mpat = Array.isArray(d.mpat_log ?? d.mpat) ? (d.mpat_log ?? d.mpat).filter((x) => x && inW(isoOf(x.date))).length : null;
+    const mp = window.Progress && window.Progress.mpatAuto ? window.Progress.mpatAuto(d) : null;
+    const mpat = mp ? mp.days.filter((x) => inW(x.date)).reduce((a, x) => a + x.sessions, 0) : null;
     const wins = objs(d.wins, 'text').map((w) => ({ iso: isoOf(w.date), text: pick(w, 'text', 'win', 'title') })).filter((w) => w.text);
     const wk = wins.filter((w) => !w.iso || inW(w.iso)), older = wins.filter((w) => w.iso && w.iso < ws).sort((a, b) => b.iso.localeCompare(a.iso));
     const winTxt = wk.map((w) => D().normT(w.text)).join(' | ');
@@ -698,7 +707,7 @@
       if (sent.includes(tag)) continue;
       sent.push(tag); changed = true;
       const noun = { bill: 'A bill', tasking: 'A tasking', todo: 'A to-do', reminder: 'A reminder' }[x.kind];
-      window.Habits.notify(discreet ? '⏰ Due soon' : `${x.ico} Due ${when}`, discreet ? `${noun} is due ${when}.` : `${x.text} — due ${when}.`, 'due-' + tag);
+      window.Habits.notify(discreet ? '🔔 Due soon' : `${x.ico} Due ${when}`, discreet ? `${noun} is due ${when}.` : `${x.text} — due ${when}.`, 'due-' + tag);
     }
     if (changed) save();
   }

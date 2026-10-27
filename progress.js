@@ -1,5 +1,5 @@
 /* Daily Notes – progress: Today "Update progress" + "Log money" cards, the Money-tab money log, and the read-only Goals tab
-   (computed from habits, Health, WD1, the MMPA checklist, the MPAT log, the VA client hunt and finance). No personal data
+   (computed from habits, Health, WD1, the MPAT auto-feed, the VA client hunt and finance). No personal data
    lives in this file: every number comes from the decrypted notes, the encrypted overlay (Outbox edits) or the habit tracker.
    Entry happens only on Today / Money; the Goals tab renders no inputs, buttons or selects. */
 (function () {
@@ -69,13 +69,6 @@
     return m;
   }
   const leadsOf = (d) => D().objs(vaOf(d).leads, 'name').map((it) => ({ it, v: C.leadVal(it) })).filter((x) => x.v);
-  function studies(d) {
-    const raw = d.studies ?? d.mmpa;
-    const items = D().arr(Array.isArray(raw) ? raw : isObj(raw) && Array.isArray(raw.subjects) ? raw.subjects : raw);
-    const lbl = (it) => (typeof it === 'string' ? it : [D().pick(it, 'code', 'name', 'subject'), D().pick(it, 'title')].filter(Boolean).join(' – ') || '(subject)');
-    const exam = isObj(raw) ? D().pick(raw, 'exam_date', 'exam') : D().str(d.mmpa_exam_date);
-    return { items: items.map((it) => ({ it, label: lbl(it), done: isObj(it) && !!it.done, local: isObj(it) && it._local })), exam };
-  }
   const WD1 = { years: ['⏳', 'Time in service', 'yrs'], live: ['🛰️', 'Live intercepts', ''], sim: ['🖥️', 'Sim intercepts', ''], hours: ['⏱️', 'Hours', 'h'] };
   function wd1Rows(d) {
     const w = isObj(d.wd1) ? d.wd1 : null;
@@ -110,13 +103,6 @@
   }
 
   /* ================= Today: Update progress ================= */
-  function legacyStudyTicks(d) {
-    const f = F(); if (!f) return;
-    let t; try { t = JSON.parse(localStorage.getItem('dn.ticks.v1')) || {}; } catch { return; }
-    let moved = 0;
-    studies(d).items.forEach((x) => { const id = D().hid('study:' + x.label); if (t[id]) { if (!x.done) { f.set({ sec: 'studies', op: 'done', item: x.it, label: x.label, val: true }); moved++; } delete t[id]; localStorage.setItem('dn.ticks.v1', JSON.stringify(t)); } });
-    return moved;
-  }
   function counter(label, val, onSet, idp) {
     const { h } = D();
     return h('div', { class: 'pg-ctr' }, h('span', { class: 'pg-ctr-l' }, label),
@@ -149,7 +135,6 @@
     const { h, num, fmtNum, peso } = D();
     const f = F(), t = today();
     if (!f) return null;
-    legacyStudyTicks(d);
     const sec = (ico, title, kids, cls) => h('section', { class: 'pg-sec' + (cls ? ' ' + cls : '') }, h('h3', { class: 'pg-h' }, ico + ' ' + title), kids);
     // leads
     const leads = leadsOf(d), active = leads.filter((x) => x.v.status !== 'Lost');
@@ -161,11 +146,6 @@
         h('button', { type: 'button', class: 'icon', 'aria-label': 'Edit lead: ' + x.v.name, onclick: () => { const cl = sheet('✎ Edit lead', leadForm(x.it, () => cl()), 'ld-sheet'); } }, '✎')))) : h('p', { class: 'small muted' }, 'No leads yet.'),
       leads.length > active.length ? h('p', { class: 'small muted' }, `${leads.length - active.length} lost lead${leads.length - active.length > 1 ? 's' : ''} hidden`) : null,
       h('button', { type: 'button', class: 'tiny', id: 'ld-add', onclick: () => { const cl = sheet('🤝 Significant lead', leadForm(null, () => cl()), 'ld-sheet'); } }, '＋ Significant lead')]);
-    // MMPA ticks
-    const st = studies(d), nd = st.items.filter((x) => x.done).length;
-    const mmSec = sec('📚', `MMPA checklist · ${nd}/${st.items.length}`, st.items.length ? h('ul', { class: 'checks pg-checks' }, st.items.map((x, i) => h('li', { class: x.done ? 'done' : '' },
-      h('input', { type: 'checkbox', id: 'mm-' + i, checked: x.done || null, onchange: (e) => f.set({ sec: 'studies', op: 'done', item: x.it, label: x.label, val: e.target.checked }) }),
-      h('label', { for: 'mm-' + i }, x.label, x.local ? h('span', { class: 'chip local' }, '✎') : null)))) : h('p', { class: 'small muted' }, 'No subjects listed yet.'));
     // savings
     const sv = savingsOf(d);
     const sIn = h('input', { type: 'number', id: 'sv-total', inputmode: 'decimal', step: 'any', min: '0', placeholder: 'Total savings ₱', value: num(fin(d).savingsTotal) == null ? '' : String(num(fin(d).savingsTotal)) });
@@ -177,7 +157,7 @@
     } }, h('div', { class: 'qc-row' }, sIn, h('button', { type: 'submit', class: 'qc-add', id: 'sv-save' }, 'Save')),
       h('p', { class: 'small muted' }, sv.cur != null ? `Now ${peso(sv.cur)}${sv.asOf ? ' · as of ' + fmtD(sv.asOf) : ''} (${sv.src})` : 'Current savings not set yet. All accounts combined; account names only, never numbers.')));
     // Work applications, WD1 controls/hours and MPAT come only from the 📡 Auto-synced card (pulled from the sheets) – no manual entry.
-    return h('div', { class: 'pg-secs', id: 'c-progress' }, leadSec, mmSec, svSec);
+    return h('div', { class: 'pg-secs', id: 'c-progress' }, leadSec, svSec);
   }
   /* ================= Today: one "Update" card – 💸 Money · 💪 Health · 📈 Progress (one pane at a time) ================= */
   let upPane = 'money';
@@ -284,7 +264,6 @@
     if (m) return m;
     const t = `${D().pick(g, 'title', 'name')} ${D().pick(g, 'area', 'category')}`.toLowerCase();
     if (/\bwd1\b|upgrade/.test(t)) return 'wd1';
-    if (/mmpa|comprehensive|master'?s|thesis/.test(t)) return 'studies';
     if (/\bmpat\b/.test(t)) return 'mpat';
     if (/exercise|fitness|\bpft\b|\brun\b|gym/.test(t)) return 'exercise';
     if (/sleep/.test(t)) return 'sleep';
@@ -301,14 +280,14 @@
     if (metric === 'wd1') {
       const rs = wd1Rows(d), set = rs.filter((r) => r.pct != null);
       if (set.length) p = Math.round(set.reduce((a, r) => a + r.pct, 0) / set.length); // per-criterion detail: wd1Block
-    } else if (metric === 'studies') {
-      const st = studies(d), n = st.items.filter((x) => x.done).length;
-      if (st.items.length) p = pct(n, st.items.length); // subject list: studiesBlock
-      const sm = hab('mmpa', /mmpa|study/i); if (sm && (sm.monthVal || sm.weekVal)) lines.push(`${sm.emoji} ${sm.name}: ${sm.weekVal} ${sm.unit || ''} this week · ${Math.round((sm.rate30 ?? 0) * 100)}% of days (30d)`.replace(/\s+·/, ' ·'));
     } else if (metric === 'mpat') {
-      const x = hab('mpat', /\bmpat\b/i), logs = D().arr(d.mpat_log ?? d.mpat).length;
-      if (x && x.monthVal) { p = Math.round((x.rate30 ?? 0) * 100); lines.push(habLine(x)); }
-      if (logs) lines.push(`✈️ ${logs} practice session${logs > 1 ? 's' : ''} logged`);
+      const m = mpatAuto(d, t);
+      if (m) {
+        const wkDays = m.week ? m.week.days : 0;
+        p = pct(wkDays, 7); // days practiced in the last 7
+        if (m.streak) lines.push(`🔥 ${m.streak}-day streak${m.bestStreak > m.streak ? ` (best ${m.bestStreak})` : ''}`);
+        if (m.week) lines.push(`Last 7 days: ${m.week.sessions} session${m.week.sessions === 1 ? '' : 's'} · ${D().fmtNum(m.week.answered)} questions answered${m.week.acc != null ? ` · ${m.week.acc}% accuracy` : ''}`);
+      }
     } else if (metric === 'exercise' || metric === 'sleep' || metric === 'faith') {
       const xs = metric === 'exercise' ? [hab('exercise', /^exercise/i)] : metric === 'sleep' ? [hab('sleep', /sleep/i)] : [hab('devotion', /devotion|bible/i), hab('prayer', /^prayer/i)];
       const live = xs.filter((x) => x && x.monthVal);
@@ -354,20 +333,40 @@
       bar(r.pct, r.label, 'thin'))),
       last ? h('p', { class: 'small muted' }, '📡 Last duty: ', fmtDate(isoDate(last.date), { weekday: 'short' }), [pick(last, 'bcc', 'site'), pick(last, 'shift')].filter(Boolean).map((x) => ' · ' + x).join(''), ` · ${duty.length} logged`) : null);
   }
-  function studiesBlock(d) {
-    const { h, dueInfo } = D();
-    const st = studies(d);
-    if (!st.items.length) return null;
-    const n = st.items.filter((x) => x.done).length, p = pct(n, st.items.length), left = st.items.filter((x) => !x.done);
-    const examDi = st.exam ? dueInfo(st.exam, false) : null;
-    return h('div', { class: 'gl-blk', id: 'c-studies' }, h('p', { class: 'small' }, `📚 ${n} / ${st.items.length} reviewed`, examDi ? h('span', { class: `chip ${examDi.cls}` }, '🗓️ Exam: ', examDi.label) : null),
-      left.length ? h('div', { class: 'gl-chips' }, left.map((x) => h('span', { class: 'chip' + (x.local ? ' local' : '') }, x.label))) : h('p', { class: 'small' }, '🎉 All subjects reviewed'));
+  // MPAT is fully automatic: `auto.mpat` (Daniel's answers in the MPAT Practice app + MPAT Trainer) is written at publish from the Guard sheet.
+  const mpatRaw = (d) => { const m = isObj(d.auto) && isObj(d.auto.mpat) ? d.auto.mpat : null; return m && Array.isArray(m.days) ? m : null; };
+  const dayAdd = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  // Stats are recomputed from the per-day rows against *today*, so a streak never goes stale between publishes.
+  function mpatAuto(d, t) {
+    const m = mpatRaw(d); if (!m) return null;
+    t = t || today();
+    const days = m.days.filter((x) => x && isoOf(x.date) && x.answered > 0).sort((a, b) => a.date.localeCompare(b.date));
+    const set = new Set(days.map((x) => x.date));
+    let cur = set.has(t) ? t : dayAdd(t, -1), streak = 0;
+    while (set.has(cur)) { streak++; cur = dayAdd(cur, -1); }
+    let best = 0, run = 0, prev = null;
+    for (const x of days) { run = prev && dayAdd(x.date, -1) === prev ? run + 1 : 1; best = Math.max(best, run); prev = x.date; }
+    const from7 = dayAdd(t, -6), w = days.filter((x) => x.date >= from7 && x.date <= t);
+    const sum = (k) => w.reduce((a, x) => a + (x[k] || 0), 0), graded = w.filter((x) => x.acc != null);
+    const gq = graded.reduce((a, x) => a + x.answered, 0), gc = graded.reduce((a, x) => a + x.correct, 0);
+    return { days, streak, bestStreak: best, practicedToday: set.has(t), lastPracticed: days.length ? days[days.length - 1].date : null, updated: m.updated,
+      week: { days: w.length, sessions: sum('sessions'), answered: sum('answered'), acc: gq ? Math.round((gc / gq) * 100) : null },
+      total: { sessions: days.reduce((a, x) => a + x.sessions, 0), answered: days.reduce((a, x) => a + x.answered, 0), days: days.length } };
+  }
+  function mpatWeekRows(m, t) {
+    const by = new Map(m.days.map((x) => [x.date, x]));
+    return Array.from({ length: 7 }, (_, i) => { const iso = new Date(Date.parse(t + 'T00:00:00Z') - i * 86400000).toISOString().slice(0, 10); return { iso, x: by.get(iso) || null }; });
   }
   function mpatBlock(d) {
-    const { h, objs, pick } = D();
-    const xs = objs(d.mpat_log ?? d.mpat, 'notes').filter((x) => isoOf(x.date)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
-    return h('div', { class: 'gl-blk', id: 'c-mpat' }, xs.length ? h('ul', { class: 'gl-why small' }, xs.slice(0, 3).map((x) => h('li', null, `✈️ ${fmtD(isoOf(x.date))}`, [pick(x, 'area', 'section', 'test'), pick(x, 'score'), pick(x, 'time', 'duration')].filter(Boolean).map((y) => ' · ' + y).join(''),
-      pick(x, 'notes', 'note') ? h('span', { class: 'muted' }, ' — ' + pick(x, 'notes', 'note')) : null, x._local ? h('span', { class: 'chip local' }, '✎') : null))) : h('p', { class: 'small muted' }, '✈️ No practice sessions logged yet — log them on 🏠 Today → Update → Progress.'));
+    const { h, fmtNum } = D();
+    const m = mpatAuto(d), t = today();
+    if (!m || !m.days.length) return h('div', { class: 'gl-blk', id: 'c-mpat' }, h('p', { class: 'small muted' }, '📡 Waiting for the first MPAT answers — they sync automatically from the MPAT app and MPAT Trainer (nothing to log).'));
+    const rows = mpatWeekRows(m, t);
+    return h('div', { class: 'gl-blk', id: 'c-mpat' },
+      h('p', { class: 'small' }, `🔥 Streak ${m.streak} day${m.streak === 1 ? '' : 's'}`, m.practicedToday ? ' · practiced today ✅' : ' · not yet today', m.lastPracticed ? h('span', { class: 'muted' }, ` · last ${fmtD(m.lastPracticed)}`) : null),
+      h('ul', { class: 'gl-why small mp-days' }, rows.map(({ iso, x }) => h('li', { class: x ? 'mp-on' : 'mp-off' }, `${x ? '✅' : '▫️'} ${fmtD(iso)}`,
+        x ? ` · ${x.sessions} session${x.sessions === 1 ? '' : 's'} · ${fmtNum(x.answered)} answered${x.acc != null ? ` · ${x.acc}%` : ''}${x.trainer ? ` (${x.trainer} Trainer)` : ''}` : h('span', { class: 'muted' }, ' · no practice')))),
+      h('p', { class: 'small muted' }, `Total ${fmtNum(m.total ? m.total.answered : 0)} questions in ${m.total ? m.total.sessions : 0} sessions · updates automatically`));
   }
   function vaBlock(d) {
     const { h } = D();
@@ -400,7 +399,7 @@
     if (mon.length) kids.push(h('p', { class: 'small muted' }, `📒 Logged this month: ${fl.net < 0 ? '−' : '+'}${peso(Math.abs(fl.net))} net (supporting info only – never changes the total)`));
     return h('div', { class: 'gl gl-sav', id: 'c-savings' }, h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, '💰 ', sv.title || 'Savings goal'), h('span', { class: 'chip area c-sun' }, 'Finance')), kids);
   }
-  const BLOCK = { wd1: [wd1Block, 'WD1 upgrade', 'Career'], studies: [studiesBlock, 'MMPA study checklist', 'Studies'], mpat: [mpatBlock, 'MPAT practice', 'Career'], va: [vaBlock, 'Work applications', 'Career'] };
+  const BLOCK = { wd1: [wd1Block, 'WD1 upgrade', 'Career'], mpat: [mpatBlock, 'MPAT practice', 'Career'], va: [vaBlock, 'Work applications', 'Career'] };
   function goalsCard(d) {
     const { h, card, pick, objs, dueInfo, empty, hid } = D();
     const t = today(), hs = habits();
@@ -408,7 +407,7 @@
     gs.forEach((x) => { if (x.st === 'active' && x.r.src !== 'auto' && x.r.p === 100) x.st = 'done'; });
     const active = gs.filter((x) => x.st === 'active'), hold = gs.filter((x) => x.st === 'hold'), done = gs.filter((x) => x.st === 'done');
     // trackers without a goal in notes.json still get a row (nothing that used to be on Goals disappears)
-    const hasData = { wd1: () => wd1Rows(d).length || D().arr(d.duty_log).length, studies: () => studies(d).items.length, mpat: () => D().arr(d.mpat_log ?? d.mpat).length, va: () => isObj(d.va) };
+    const hasData = { wd1: () => wd1Rows(d).length || D().arr(d.duty_log).length, mpat: () => !!mpatAuto(d), va: () => isObj(d.va) };
     Object.keys(BLOCK).forEach((k) => { if (!active.some((x) => x.r.metric === k) && !hold.some((x) => x.r.metric === k) && hasData[k]()) { const g = { title: BLOCK[k][1], area: BLOCK[k][2], metric: k }; active.push({ g, st: 'active', r: computeGoal(d, g, hs, t) }); } });
     const used = new Set();
     const areaChip = (area) => (area ? h('span', { class: `chip area c-${AREA_COLORS[parseInt(hid(area.toLowerCase()), 36) % AREA_COLORS.length]}` }, area) : null);
@@ -419,7 +418,7 @@
       return h('div', { class: 'gl' },
         h('div', { class: 'm-top' }, h('strong', { class: 'm-name' }, pick(g, 'title', 'name') || '(goal)'), areaChip(area)),
         h('div', { class: 'meter' }, bar(r.p, pick(g, 'title')),
-          h('div', { class: 'meter-foot small muted' }, r.p == null ? 'no data yet' : `${r.p}%${r.src === 'notes' ? ' · from notes' : r.src === 'milestones' ? ' · milestones' : ''}`, di ? h('span', { class: `chip ${di.cls}` }, '🏁 ', di.label) : null)),
+          h('div', { class: 'meter-foot small muted' }, r.p == null ? (r.metric === 'mpat' ? 'waiting for the first MPAT sync' : 'no data yet') : `${r.p}%${r.src === 'notes' ? ' · from notes' : r.src === 'milestones' ? ' · milestones' : ''}`, di ? h('span', { class: `chip ${di.cls}` }, '🏁 ', di.label) : null)),
         r.lines.length ? h('ul', { class: 'gl-why small' }, r.lines.map((x) => h('li', null, x))) : null,
         blk,
         pick(g, 'next_step', 'next') ? h('p', { class: 'gl-next' }, '👉 ', pick(g, 'next_step', 'next')) : null,
@@ -493,13 +492,14 @@
         (c.days || []).length ? h('ul', { class: 'au-list' }, c.days.slice().reverse().slice(0, 5).map((x) => h('li', null, h('span', null, fmtD(x.date)), h('strong', null, `${fmtNum(x.n)} control${x.n === 1 ? '' : 's'}`)))) : none('No controls on the board this period.')], 'au-abm'));
     } else g.push(grp('✈️', 'Controls & ABM', '', none('Not synced yet — Denx snapshots the ABM board each refresh.'), 'au-abm'));
     // MPAT
-    const m = a.mpat;
-    if (m && m.attempts) {
+    const m = mpatAuto(d);
+    if (m && m.days.length) {
+      const rows = mpatWeekRows(m, today()).filter((r) => r.x);
       g.push(grp('🎯', 'MPAT practice', asOf(m.updated), [
-        h('div', { class: 'm-stats au-stats' }, tile(String(m.valid7), 'valid sets · 7 days', 'au-t'), tile(m.avg7 != null ? m.avg7 + '%' : '—', 'avg score · 7 days', 'au-t'), tile(m.best != null ? m.best + '%' : '—', 'best score', 'au-t'), tile(String(m.valid), 'valid sets · all', 'au-t')),
-        (m.cats || []).length ? h('div', { class: 'au-chips' }, m.cats.map((x) => h('span', { class: 'chip au-chip' }, `${x.cat} · ${x.avg}% avg · ${x.n}×`))) : null,
-        (m.recent || []).length ? h('ul', { class: 'au-list' }, m.recent.slice(0, 5).map((x) => h('li', null, h('span', null, `${fmtD(x.date)} · ${x.cat}`), h('strong', null, x.pct != null ? x.pct + '%' : '—')))) : null], 'au-mpat'));
-    } else g.push(grp('🎯', 'MPAT practice', '', none('No attempts synced yet — scores flow in once the MPAT app reports them (see README → Auto-feeds).'), 'au-mpat'));
+        h('div', { class: 'm-stats au-stats' }, tile(String(m.streak), m.practicedToday ? 'day streak · today ✅' : 'day streak', 'au-t'), tile(String(m.week.sessions), 'sessions · 7 days', 'au-t'),
+          tile(fmtNum(m.week.answered), 'questions · 7 days', 'au-t'), tile(m.week.acc != null ? m.week.acc + '%' : '—', 'accuracy · 7 days', 'au-t')),
+        rows.length ? h('ul', { class: 'au-list' }, rows.slice(0, 5).map(({ iso, x }) => h('li', null, h('span', null, `${fmtD(iso)} · ${x.sessions} session${x.sessions === 1 ? '' : 's'}${x.trainer ? ` (${x.trainer} Trainer)` : ''}`), h('strong', null, `${fmtNum(x.answered)} answered${x.acc != null ? ' · ' + x.acc + '%' : ''}`)))) : null], 'au-mpat'));
+    } else g.push(grp('🎯', 'MPAT practice', '', none('Waiting for the first MPAT answers — the MPAT app and MPAT Trainer report them automatically (nothing to log).'), 'au-mpat'));
     // Work applications
     const w = a.work;
     if (w) {
@@ -520,5 +520,5 @@
       goals: [safe(goalsCard, 'c-goals'), safe(habitProgressCard, 'c-habitprog')],
     };
   }
-  window.Progress = { cards, loggedBetween, openExerciseLog, savingsMath, computeGoal, metricOf, flows, txList, vaStats, sheet };
+  window.Progress = { mpatAuto, cards, loggedBetween, openExerciseLog, savingsMath, computeGoal, metricOf, flows, txList, vaStats, sheet };
 })();

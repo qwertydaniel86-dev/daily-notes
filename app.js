@@ -120,6 +120,7 @@
     const t = todayISO(), tm = addDay(t, 1), tk = ticks();
     const sched = arr(d.today ?? d.schedule).map((it) => (typeof it === 'string' ? { item: it } : it)).filter((it) => it && typeof it === 'object');
     const sText = (it) => pick(it, 'item', 'event', 'title', 'text');
+    const realTime = (t) => (/^[\s—–\-·•.?]*$|^(?:n\/a|tbd|none|all[- ]day)$/i.test(t || '') ? '' : t); // "—" is a placeholder, not a time
     const sNow = sched.filter((it) => { const iso = isoDate(it.date); return !iso || iso === t; }), sTom = sched.filter((it) => isoDate(it.date) === tm);
     const schedKeys = new Set(sched.map((it) => (isoDate(it.date) || t) + '|' + normT(sText(it))));
     const lbl = (it) => (typeof it === 'string' ? it : pick(it, 'item', 'task', 'text', 'title'));
@@ -143,19 +144,19 @@
       return li;
     };
     const remLi = (r) => h('li', { class: 'rem-it' + (r.di && r.di.overdue ? ' overdue' : '') + (r.done ? ' done' : '') },
-      h('span', { class: 'rem-t' }, '⏰ ', r.label, localMark(r.it), r.di && !r.done ? h('span', { class: `chip ${r.di.cls}` }, r.di.overdue ? '⚠️ ' : '', r.di.label) : null),
+      h('span', { class: 'rem-t' }, '🔔 ', r.label, localMark(r.it), r.di && !r.done ? h('span', { class: `chip ${r.di.cls}` }, r.di.overdue ? '⚠️ ' : '', r.di.label) : null),
       F ? h('button', { type: 'button', class: 'tiny ghost rem-done', 'aria-label': (r.done ? 'Not done: ' : 'Done: ') + r.label,
         onclick: () => { F.set({ sec: 'reminders', op: 'done', item: r.it, label: r.label, val: !r.done }); if (!r.done) F.toast('✅ Reminder done – moved to “Done”'); } }, r.done ? '↶' : '✓') : null);
-    const schedLi = (it) => h('li', null, h('span', { class: 'time' }, pick(it, 'time', 'when') || '•'), h('span', null, sText(it), pick(it, 'where', 'location', 'place') ? h('span', { class: 'muted small' }, ` 📍 ${pick(it, 'where', 'location', 'place')}`) : null, localMark(it)));
+    const schedLi = (it) => h('li', null, h('span', { class: 'time' }, realTime(pick(it, 'time', 'when')) || '•'), h('span', null, sText(it), pick(it, 'where', 'location', 'place') ? h('span', { class: 'muted small' }, ` 📍 ${pick(it, 'where', 'location', 'place')}`) : null, localMark(it)));
     const openT = todos.filter((x) => !x.done).sort(byDue), doneT = todos.filter((x) => x.done);
     const openR = rems.filter((r) => !r.done).sort(byDue), doneR = rems.filter((r) => r.done);
     const doneAll = doneT.length + doneR.length;
     const sub = (title, el) => [h('p', { class: 'm-h tl-h' }, title), el];
     const body = [
       sNow.length ? sub('🗓️ Schedule', h('ul', { class: 'sched' }, sNow.map(schedLi))) : null,
-      sTom.length ? h('p', { class: 'small muted tl-tom' }, '➡️ Tomorrow: ', sTom.map((it) => [pick(it, 'time', 'when'), sText(it)].filter(Boolean).join(' ')).join(' · ')) : null,
+      sTom.length ? h('p', { class: 'small muted tl-tom' }, '➡️ Tomorrow: ', sTom.map((it) => [realTime(pick(it, 'time', 'when')), sText(it)].filter(Boolean).join(' ')).join(' · ')) : null,
       sub('✅ To-do', openT.length ? h('ul', { class: 'checks' }, openT.map(todoLi)) : empty('All clear — nothing open. ✨')),
-      openR.length ? sub('⏰ Reminders', h('ul', { class: 'bullets rem' }, openR.map(remLi))) : null,
+      openR.length ? sub('🔔 Reminders', h('ul', { class: 'bullets rem' }, openR.map(remLi))) : null,
       doneFold(doneAll, [doneT.length ? h('ul', { class: 'checks' }, doneT.slice().reverse().slice(0, 15).map(todoLi)) : null,
         doneR.length ? h('ul', { class: 'bullets rem' }, doneR.map(remLi)) : null], 'todo-done')];
     return card('mint', '✅', 'Today', body, { badge: (openT.length + openR.length) || null, sub: 'Schedule · to-dos · reminders' });

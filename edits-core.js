@@ -342,8 +342,70 @@
     }
     return out;
   }
-  const view = (notes, todayISO, nowHM) => autoDone(stripAlarms(notes), todayISO, nowHM);
-  const api = { stripAlarms, autoDone, view, isAlarm, safeUrl, linkVal, txVal, leadVal, exVal, mpatVal, dailyVal, progVal, longDigits, isoOk, getProg, listOf, mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit,
+  /* ---------- removed topics (Oct 2026): the MMPA and Law-school topics are gone for good ----------
+     Hidden here – the one choke point every card, search and nudge reads through – even if notes.json still carries them. */
+  const REMOVED_RE = /\bmmpa\b|\blaw[\s-]*school\b|\bg-law\b/i;
+  const REMOVED_KEYS = ['studies', 'mmpa', 'mmpa_exam_date'];
+  const hasRemoved = (it) => {
+    if (typeof it === 'string') return REMOVED_RE.test(it);
+    if (!isObj(it)) return false;
+    return REMOVED_RE.test([it.id, ...TEXT_KEYS.map((k) => it[k]), it.next_step, it.next, it.area, it.category].map((x) => (typeof x === 'string' ? x : '')).join(' | '));
+  };
+  function dropRemoved(notes) {
+    if (!isObj(notes)) return notes;
+    const out = Object.assign({}, notes);
+    for (const k of REMOVED_KEYS) delete out[k];
+    for (const sec of ['goals', 'today', 'schedule', 'todo', 'todos', 'taskings', 'tasks', 'reminders', 'ideas', 'habits']) {
+      if (Array.isArray(out[sec])) out[sec] = out[sec].filter((it) => !hasRemoved(it));
+    }
+    return out;
+  }
+  /* ---------- one activity shows exactly once ----------
+     Same calendar day, an event / tasking / to-do / reminder that says (substantially) the same thing as a higher-priority entry is
+     hidden: the calendar line wins over the tasking, then the to-do, then the reminder. Local (✎) entries are never hidden. */
+  const STOP = new Set('the and for with from that this your you are was has have not but all any can will due day pay get set got new one two out off per via into onto over under about after before then than also just very more some such only still need needs to-do todo task reminder remind reminders'.split(' '));
+  const stem = (w) => w.replace(/(?:ations?|ition|ings?|ied|ies|ed|es|s)$/, (m) => (m === 'ied' || m === 'ies' ? 'y' : ''));
+  const toks = (t) => { const set = new Set(); String(t || '').toLowerCase().replace(/[₱$€£]\s?[\d.,]+/g, ' ').split(/[^a-z0-9]+/).forEach((w) => { if (w.length < 3 || /^\d+$/.test(w) || STOP.has(w)) return; set.add(stem(w)); }); return set; };
+  const shared = (a, b) => { let n = 0; for (const x of a) if (b.has(x)) n++; return n; };
+  const RANK = { today: 0, schedule: 0, taskings: 1, tasks: 1, todo: 2, todos: 2, reminders: 3 };
+  function sameThing(hi, lo) { // hi: higher-priority entry, lo: candidate duplicate
+    if (hi.rank === lo.rank || lo.rank === 0) { // peers: only near-identical text counts
+      const n = shared(hi.all, lo.all), m = Math.min(hi.all.size, lo.all.size);
+      return m > 0 && (n >= 2 || (n === hi.all.size && n === lo.all.size)) && n / m >= 0.8;
+    }
+    for (const part of hi.parts) { // an event line may bundle several things ("Payday …; Paramount … decision due"): compare each clause too
+      const n = shared(part, lo.all), m = Math.min(part.size, lo.all.size);
+      if (m > 0 && (n >= 2 || (n === part.size && n === lo.all.size)) && n / m >= 0.5) return true;
+    }
+    return false;
+  }
+  function dedupe(notes) {
+    if (!isObj(notes)) return notes;
+    const all = [];
+    for (const sec of Object.keys(RANK)) {
+      if (!Array.isArray(notes[sec])) continue;
+      notes[sec].forEach((it, idx) => {
+        if (!isObj(it)) return;
+        const day = dayOf(pick(it, ...SEC_DATE[sec])), text = entryText(it);
+        if (!day || !text) return;
+        all.push({ sec, idx, day, rank: RANK[sec], local: !!it._local, all: toks(text), parts: String(text).split(/\s*[;|•]\s*|\s+[–—]\s+/).map(toks).filter((x) => x.size) });
+      });
+    }
+    all.sort((a, b) => a.rank - b.rank || (a.sec === b.sec ? a.idx - b.idx : 0));
+    const hide = {}; const kept = [];
+    for (const x of all) {
+      if (!x.all.size) { kept.push(x); continue; }
+      const dup = !x.local && kept.some((k) => k.day === x.day && sameThing(k, x));
+      if (dup) (hide[x.sec] || (hide[x.sec] = new Set())).add(x.idx); else kept.push(x);
+    }
+    const secs = Object.keys(hide);
+    if (!secs.length) return notes;
+    const out = Object.assign({}, notes);
+    for (const sec of secs) out[sec] = notes[sec].filter((_, i) => !hide[sec].has(i));
+    return out;
+  }
+  const view = (notes, todayISO, nowHM) => autoDone(dedupe(dropRemoved(stripAlarms(notes))), todayISO, nowHM);
+  const api = { stripAlarms, dropRemoved, dedupe, autoDone, view, isAlarm, safeUrl, linkVal, txVal, leadVal, exVal, mpatVal, dailyVal, progVal, longDigits, isoOk, getProg, listOf, mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit,
     SECS, TX_TYPES, TX_OUT, TX_IN, TX_ACCOUNTS, LEAD_STATUS, EX_TYPES, KIND: 'dn-edits-v1', OVERLAY_KIND: 'dn-overlay-v1' };
   root.EditsCore = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

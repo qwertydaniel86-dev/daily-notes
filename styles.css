@@ -629,3 +629,4 @@ button.tiny.ghost{background:rgba(255,255,255,.85);color:var(--ink);border:1px s
 .pg-opt>summary{cursor:pointer;font-size:.8rem;font-weight:700;color:var(--muted)}
 .pg-opt[open]>summary{margin-bottom:.45rem}
 .pg-opt>.pg-sec{border:0;padding:0;background:none}
+.chk.auto{display:inline-flex;align-items:center;justify-content:center;cursor:default}.chk.auto:active{transform:none}
