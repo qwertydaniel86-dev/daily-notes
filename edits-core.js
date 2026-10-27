@@ -281,7 +281,69 @@
     }
     return false;
   }
-  const api = { safeUrl, linkVal, txVal, leadVal, exVal, mpatVal, dailyVal, progVal, longDigits, isoOk, getProg, listOf, mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit,
+
+  /* ================= view normaliser: what the site is allowed to show =================
+     Pure functions, applied to the merged notes right before rendering (Features.merge / app.js render), so Today, Week, badges,
+     search, pings and the weekly review all agree. They never touch notes.json or the stored edits.
+     1. stripAlarms – phone alarms are not Daily Notes content (the event itself is). Dropped: any entry whose text starts with
+        "Alarm:" / "0530 Alarm: …" / "⏰ Alarm …", entries typed/kind "alarm", and a top-level `alarms` section. A reminder/to-do that is
+        just the event again with an "(alarm 0530 …)" note is dropped when an event exists on the same date (shown once, as the event).
+     2. autoDone – standing rule: a to-do / reminder / tasking whose date (or date+time today) has passed counts as DONE unless it was
+        cancelled (cancelled ones are simply hidden). Items due today stay until their day (or stated time) is over. Bills are money
+        status and are never auto-flipped. */
+  const dayOf = (s) => { const m = /^(\d{4}-\d{2}-\d{2})/.exec(str(s)); return m && isoOk(m[1]) ? m[1] : null; };
+  const timeOf = (s) => { const m = /^\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/.exec(str(s)); return m ? m[1] + ':' + m[2] : null; };
+  const TEXT_KEYS = ['item', 'event', 'title', 'text', 'task', 'name'];
+  const ALARM_START = /^(?:[⏰🔔]\uFE0F?\s*)?(?:\d{1,2}[:.]?\d{2}\s*(?:h|hrs?)?\s*[-–—:]?\s*)?(?:(?:wake[- ]?up|morning)\s+)?alarm(?:\s+clock)?\s*(?:[:\-–—~@]|\b(?:at|for|to|set|on)\b|\d)/i;
+  const ALARM_PAREN = /\(\s*(?:set\s+)?alarm\b[^)]*\)/i;
+  const entryText = (it) => (typeof it === 'string' ? str(it) : isObj(it) ? pick(it, ...TEXT_KEYS) : '');
+  const isAlarm = (it) => {
+    if (isObj(it) && /^alarms?$/i.test(pick(it, 'type', 'kind', 'category'))) return true;
+    return ALARM_START.test(entryText(it));
+  };
+  const SEC_DATE = { today: ['date'], schedule: ['date'], reminders: ['due', 'date'], todo: ['due', 'deadline'], todos: ['due', 'deadline'], taskings: ['deadline', 'due'], tasks: ['deadline', 'due'] };
+  function stripAlarms(notes) {
+    if (!isObj(notes)) return notes;
+    const out = Object.assign({}, notes);
+    for (const k of Object.keys(out)) if (/^alarms?$/i.test(k)) delete out[k];
+    const eventDates = new Set();
+    for (const sec of ['today', 'schedule']) if (Array.isArray(out[sec])) out[sec].forEach((e) => { if (isObj(e) && !isAlarm(e)) { const d = dayOf(e.date); if (d) eventDates.add(d); } });
+    for (const sec of Object.keys(SEC_DATE)) {
+      if (!Array.isArray(out[sec])) continue;
+      const isEvents = sec === 'today' || sec === 'schedule';
+      out[sec] = out[sec].filter((it) => {
+        if (isAlarm(it)) return false;
+        if (!isEvents && ALARM_PAREN.test(entryText(it)) && isObj(it)) { const d = dayOf(pick(it, ...SEC_DATE[sec])); if (d && eventDates.has(d)) return false; }
+        return true;
+      });
+    }
+    return out;
+  }
+  const isCancelled = (it) => it.cancelled === true || /^cancell?ed$/i.test(str(it.status)) || /^cancell?ed$/i.test(str(it.state));
+  function autoDone(notes, todayISO, nowHM) {
+    if (!isObj(notes) || !dayOf(todayISO)) return notes;
+    const out = Object.assign({}, notes);
+    const over = (raw) => { const d = dayOf(raw); if (!d) return null; if (d < todayISO) return d; const t = timeOf(raw); return d === todayISO && t && nowHM && t < nowHM ? d : null; };
+    const DONE_ST = /done|complete|closed|✅|🟢/i;
+    for (const [sec, st] of [['todo', 0], ['todos', 0], ['reminders', 0], ['taskings', 1], ['tasks', 1]]) {
+      if (!Array.isArray(out[sec])) continue;
+      out[sec] = out[sec].map((it) => {
+        if (!isObj(it)) return it;
+        const isDone = st ? DONE_ST.test(str(it.status)) : !!it.done;
+        if (isDone) return it;
+        const cancelled = isCancelled(it);
+        const d = cancelled ? null : over(pick(it, ...SEC_DATE[sec]));
+        if (!cancelled && !d) return it;
+        const o = Object.assign({}, it, { _autodone: cancelled ? 'cancelled' : 'past' });
+        if (st) o.status = 'Done'; else o.done = true;
+        o.done_on = str(it.done_on) || d || todayISO;
+        return o;
+      });
+    }
+    return out;
+  }
+  const view = (notes, todayISO, nowHM) => autoDone(stripAlarms(notes), todayISO, nowHM);
+  const api = { stripAlarms, autoDone, view, isAlarm, safeUrl, linkVal, txVal, leadVal, exVal, mpatVal, dailyVal, progVal, longDigits, isoOk, getProg, listOf, mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit,
     SECS, TX_TYPES, TX_OUT, TX_IN, TX_ACCOUNTS, LEAD_STATUS, EX_TYPES, KIND: 'dn-edits-v1', OVERLAY_KIND: 'dn-overlay-v1' };
   root.EditsCore = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

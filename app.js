@@ -37,6 +37,7 @@
   const num = (v) => (typeof v === 'number' && isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && isFinite(+v.replace(/,/g, '')) ? +v.replace(/,/g, '') : null);
   const fmtNum = (n) => (n == null ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: 2 }));
 
+  function nowHM() { return new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()); }
   function todayISO() {
     return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   }
@@ -612,7 +613,7 @@
     if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) rawData = {};
     lastRaw = rawData;
     const F = window.Features && window.Features.ready() ? window.Features : null;
-    const d = F ? F.merge(rawData) : rawData; // encrypted local edits merged over notes.json
+    const d = F ? F.merge(rawData) : window.EditsCore.view(rawData, todayISO(), nowHM()); // encrypted local edits merged over notes.json (+ no alarms, past items auto-done)
     const board = $('board');
     const safe = (fn) => { try { return fn(d); } catch (e) { console.error(e); return card('mist', '⚠️', fn.name, empty('Could not render this section.')); } };
     const tag = (sec, id) => (el) => { if (el) { if (id && !el.id) el.id = id; el.dataset.sec = sec; } return el; };
@@ -661,7 +662,7 @@
     // Habit tracker: encrypted local data, unlocked with the same key (never blocks the notes on failure).
     if (window.Habits) { try { await window.Habits.unlock(key, env, data); } catch (e) { console.warn('habits unavailable', e); } }
     if (window.Features) { try { await window.Features.unlock(key, env, data); } catch (e) { console.warn('edits overlay unavailable', e); } }
-    const sig = env.iv + env.ct.length;
+    const sig = env.iv + env.ct.length + '@' + todayISO(); // the day is part of the signature: after midnight the board re-renders (auto-done rule)
     if (sig !== lastRendered) { render(data); lastRendered = sig; }
     showApp();
     if (window.Sync) { try { window.Sync.unlock(key, env); } catch (e) { console.warn('sync unavailable', e); } }

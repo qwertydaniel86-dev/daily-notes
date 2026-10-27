@@ -100,11 +100,11 @@
   }
   function merge(notes) {
     raw = notes && typeof notes === 'object' ? notes : {};
-    if (!ready()) { merged = raw; return raw; }
+    if (!ready()) { merged = C.view(raw, today(), nowHM()); return merged; }
     prune();
     const r = C.apply(raw, O.edits, true);
     missing = new Set(r.missing.map((e) => e.eid));
-    merged = r.notes;
+    merged = C.view(r.notes, today(), nowHM()); // no alarms; past-dated to-dos/reminders/taskings count as done (see EditsCore.view)
     feedExercise(merged);
     return merged;
   }
@@ -264,9 +264,9 @@
     const wr = d.weekly_review && typeof d.weekly_review === 'object' && !Array.isArray(d.weekly_review) ? d.weekly_review : null;
     const hs = window.Habits && window.Habits.weekStats ? window.Habits.weekStats(ws) : null;
     const doneList = [];
-    arr(d.todo ?? d.todos).forEach((it) => { if (it && typeof it === 'object' && it.done && (!isoOf(it.done_on) || inW(isoOf(it.done_on)))) doneList.push({ ico: '✅', text: pick(it, 'item', 'task', 'text', 'title'), local: it._local }); });
+    arr(d.todo ?? d.todos).forEach((it) => { if (it && typeof it === 'object' && it.done && !it._autodone && (!isoOf(it.done_on) || inW(isoOf(it.done_on)))) doneList.push({ ico: '✅', text: pick(it, 'item', 'task', 'text', 'title'), local: it._local }); });
     let tasks = 0;
-    arr(d.taskings).forEach((it) => { if (it && typeof it === 'object' && statusOf(it.status).key === 'done' && (!isoOf(it.done_on) || inW(isoOf(it.done_on)))) { tasks++; doneList.push({ ico: '🎖️', text: pick(it, 'task', 'title', 'item'), local: it._local }); } });
+    arr(d.taskings).forEach((it) => { if (it && typeof it === 'object' && statusOf(it.status).key === 'done' && !it._autodone && (!isoOf(it.done_on) || inW(isoOf(it.done_on)))) { tasks++; doneList.push({ ico: '🎖️', text: pick(it, 'task', 'title', 'item'), local: it._local }); } });
     let paid = 0;
     billRows(d).forEach((r) => { const po = isoOf(r.it.paid_on); if (r.key === 'paid' && (po ? inW(po) : r.dt && inW(r.dt.iso))) { paid++; doneList.push({ ico: '💳', text: `${pick(r.it, 'name') || 'Bill'} paid`, local: r.it._local }); } });
     const mpat = Array.isArray(d.mpat_log ?? d.mpat) ? (d.mpat_log ?? d.mpat).filter((x) => x && inW(isoOf(x.date))).length : null;
