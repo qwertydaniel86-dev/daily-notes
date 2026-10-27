@@ -77,7 +77,9 @@
   }
   const cnt = (x) => { const n = num(x); return n == null ? null : Math.max(0, Math.min(9999, Math.round(n))); };
   function dailyVal(v) { if (!isObj(v) || !isoOk(v.date)) return null; const s = cnt(v.sent) ?? 0, r = cnt(v.replies) ?? 0; return { date: str(v.date), sent: s, replies: r }; }
-  const PROGRESS_KEY = /^(wd1\.[a-z][a-z0-9_]{0,19}|finance\.savingsTotal)$/;
+  // wd1.<field> progress edits are RETIRED (Oct 2026): the whole WD1 card is pulled from the ABM board, so an old phone edit (e.g. wd1.live)
+  // is invalid → dropped from the Outbox / sync queue (badge clears) and never applied.
+  const PROGRESS_KEY = /^(finance\.savingsTotal)$/;
   const progVal = (v) => (v === null ? null : (() => { const n = num(v); return n != null && n >= 0 && n <= 1e10 ? Math.round(n * 100) / 100 : undefined; })());
   // record sections (add / set / del of whole items)
   const REC = { links: linkVal, transactions: txVal, 'va.leads': leadVal };

@@ -77,7 +77,7 @@
     return Object.keys(w).filter((k) => isObj(w[k]) && /^[a-z][a-z0-9_]{0,19}$/.test(k)).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)).map((k) => {
       const [ico, label, unit] = WD1[k] || ['📌', k.replace(/_/g, ' '), ''];
       const req = D().num(w[k].req ?? w[k].required), cur = D().num(w[k].cur ?? w[k].current);
-      return { k, ico, label, unit, req, cur, local: !!w[k]._local, pct: req && cur != null ? pct(cur, req) : null };
+      return { k, ico, label, unit, req, cur, auto: w[k].src === 'auto', missing: w[k].src === 'auto-missing', pct: req && cur != null ? pct(cur, req) : null };
     });
   }
   const habits = () => (window.Habits && window.Habits.summary ? window.Habits.summary() : []);
@@ -324,14 +324,20 @@
   function wd1Block(d) {
     const { h, fmtNum, objs, pick, fmtDate, isoDate } = D();
     const rs = wd1Rows(d);
+    const ab = isObj(d.auto) && isObj(d.auto.abm) ? d.auto.abm : null, cr = ab && isObj(ab.career) ? ab.career : null, ld = ab && isObj(ab.lastDuty) ? ab.lastDuty : null;
     const duty = objs(d.duty_log ?? d.duty, 'notes').filter((x) => isoDate(x.date) && isoDate(x.date) <= today()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
-    if (!rs.length && !duty.length) return null;
+    if (!rs.length && !duty.length && !ld) return null;
     const last = duty[0];
+    const why = (r) => (r.missing ? (cr && cr.missing && cr.missing[0] ? `waiting for the board: ${cr.missing[0]}` : 'waiting for the board') : null);
+    const lastLine = ld
+      ? h('p', { class: 'small muted' }, '📡 Last duty on the board: ', fmtDate(isoDate(ld.date), { weekday: 'short' }), ld.hours ? ` · ${fmtNum(ld.hours)} h` : '', ld.controls ? ` · ${fmtNum(ld.controls)} control${ld.controls === 1 ? '' : 's'}` : '', ld.days ? ` · ${ld.days} duty day${ld.days === 1 ? '' : 's'} recorded` : '', ' · updates automatically')
+      : last ? h('p', { class: 'small muted' }, '📡 Last duty: ', fmtDate(isoDate(last.date), { weekday: 'short' }), [pick(last, 'bcc', 'site'), pick(last, 'shift')].filter(Boolean).map((x) => ' · ' + x).join(''), ` · ${duty.length} logged`) : null;
     return h('div', { class: 'gl-blk', id: 'c-wd1' }, rs.map((r) => h('div', { class: 'gl-crit' + (r.pct === 100 ? ' met' : '') },
-      h('div', { class: 'meter-top' }, h('span', null, r.ico, ' ', r.label, r.local ? h('span', { class: 'chip local' }, '✎') : null),
-        h('span', { class: 'small' }, r.cur == null ? h('span', { class: 'muted' }, `not set / ${fmtNum(r.req)}`) : `${fmtNum(r.cur)} / ${fmtNum(r.req)}${r.unit ? ' ' + r.unit : ''}`, r.pct != null ? ` · ${r.pct >= 100 ? '✓' : r.pct + '%'}` : '')),
-      bar(r.pct, r.label, 'thin'))),
-      last ? h('p', { class: 'small muted' }, '📡 Last duty: ', fmtDate(isoDate(last.date), { weekday: 'short' }), [pick(last, 'bcc', 'site'), pick(last, 'shift')].filter(Boolean).map((x) => ' · ' + x).join(''), ` · ${duty.length} logged`) : null);
+      h('div', { class: 'meter-top' }, h('span', null, r.ico, ' ', r.label),
+        h('span', { class: 'small' }, r.cur == null ? h('span', { class: 'muted' }, `${why(r) ? 'waiting for the board' : 'not set'} / ${fmtNum(r.req)}`) : `${fmtNum(r.cur)} / ${fmtNum(r.req)}${r.unit ? ' ' + r.unit : ''}`, r.pct != null ? ` · ${r.pct >= 100 ? '✓' : r.pct + '%'}` : '')),
+      bar(r.pct, r.label, 'thin'), why(r) ? h('p', { class: 'small muted' }, '📡 ', why(r)) : null)),
+      cr && cr.level ? h('p', { class: 'small muted' }, `📡 Board: ${cr.level}${cr.effective ? ' since ' + fmtDate(cr.effective) : ''}${cr.remarks ? ' · ' + cr.remarks : ''} · all numbers pulled automatically`) : null,
+      lastLine);
   }
   // MPAT is fully automatic: `auto.mpat` (Daniel's answers in the MPAT Practice app + MPAT Trainer) is written at publish from the Guard sheet.
   const mpatRaw = (d) => { const m = isObj(d.auto) && isObj(d.auto.mpat) ? d.auto.mpat : null; return m && Array.isArray(m.days) ? m : null; };
@@ -482,15 +488,17 @@
     // Controls & ABM
     const ab = a.abm;
     if (ab) {
-      const c = ab.controls || {}, r = ab.radar || {}, w = isObj(d.wd1) ? d.wd1 : {};
-      const lr = isObj(w.live) ? w.live.req : null, hr = isObj(w.hours) ? w.hours.req : null;
-      g.push(grp('✈️', 'Controls & ABM', asOf(ab.updated), [
-        h('div', { class: 'm-stats au-stats' }, tile(fmtNum(c.total ?? 0), `controls total${lr ? ` · WD1 needs ${lr}` : ''}`, 'au-t'), tile(fmtNum(c.period ?? 0), `controls ${c.from ? fmtD(c.from, { weekday: undefined }) + '–' + fmtD(c.to, { weekday: undefined }) : 'this period'}`, 'au-t'),
-          tile(fmtNum(r.total ?? 0), `ABM hours${hr ? ` · of ${fmtNum(hr)}` : ''}`, 'au-t'), tile(c.last ? fmtD(c.last) : '—', 'last control', 'au-t')),
-        lr ? bar(pct(c.total || 0, lr), 'Live controls toward WD1', 'au-bar') : null,
-        hr ? bar(pct(r.total || 0, hr), 'ABM hours toward WD1', 'au-bar') : null,
-        (c.days || []).length ? h('ul', { class: 'au-list' }, c.days.slice().reverse().slice(0, 5).map((x) => h('li', null, h('span', null, fmtD(x.date)), h('strong', null, `${fmtNum(x.n)} control${x.n === 1 ? '' : 's'}`)))) : none('No controls on the board this period.')], 'au-abm'));
-    } else g.push(grp('✈️', 'Controls & ABM', '', none('Not synced yet — Denx snapshots the ABM board each refresh.'), 'au-abm'));
+      const c = ab.controls || {}, r = ab.radar || {}, w = isObj(d.wd1) ? d.wd1 : {}, cr = isObj(ab.career) ? ab.career : null, ld = isObj(ab.lastDuty) ? ab.lastDuty : null;
+      const lr = isObj(w.live) ? w.live.req : null, hr = isObj(w.hours) ? w.hours.req : null, sr = isObj(w.sim) ? w.sim.req : null;
+      const live = cr && cr.live != null ? cr.live : c.total, hours = r.total != null ? r.total : cr ? cr.hours : null;
+      g.push(grp('✈️', 'WD1 · intercepts & ABM hours', asOf(ab.updated), [
+        h('div', { class: 'm-stats au-stats' }, tile(fmtNum(live ?? 0), `live intercepts${lr ? ` · WD1 needs ${lr}` : ''}`, 'au-t'), tile(cr && cr.sim != null ? fmtNum(cr.sim) : '—', `sim intercepts${sr ? ` · needs ${sr}` : ''}`, 'au-t'),
+          tile(fmtNum(hours ?? 0), `ABM hours${hr ? ` · of ${fmtNum(hr)}` : ''}`, 'au-t'), tile(ld ? fmtD(ld.date) : '—', 'last duty', 'au-t')),
+        lr ? bar(pct(live || 0, lr), 'Live intercepts toward WD1', 'au-bar') : null,
+        hr ? bar(pct(hours || 0, hr), 'ABM hours toward WD1', 'au-bar') : null,
+        cr && cr.missing && cr.missing.length ? none('Time in service: waiting for the board — ' + cr.missing[0] + '.') : null,
+        ld && (ld.recent || []).length ? h('ul', { class: 'au-list' }, ld.recent.slice().reverse().map((x) => h('li', null, h('span', null, fmtD(x.date)), h('strong', null, `${fmtNum(x.hours)} h on duty`)))) : none('No duty days on the board yet.')], 'au-abm'));
+    } else g.push(grp('✈️', 'WD1 · intercepts & ABM hours', '', none('Waiting for the first board pull — it syncs automatically (nothing to log).'), 'au-abm'));
     // MPAT
     const m = mpatAuto(d);
     if (m && m.days.length) {
