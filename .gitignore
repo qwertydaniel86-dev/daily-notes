@@ -8,4 +8,8 @@ pending-edits.json
 *.bak
 *.tmp
 *.png
+# static home-screen icons: keep these
+!apple-touch-icon.png
+!icon-512.png
+!favicon.png
 .DS_Store
