@@ -587,7 +587,6 @@ button.tiny.ghost{background:rgba(255,255,255,.85);color:var(--ink);border:1px s
 .rem-it{display:flex;align-items:flex-start;gap:.4rem;justify-content:space-between}
 .rem-it .rem-t{flex:1;min-width:0}
 .rem-it.done .rem-t{text-decoration:line-through;color:var(--muted)}
-.rem-done{flex:none;padding:.1rem .55rem}
 .done-fold{margin-top:.5rem;background:rgba(255,255,255,.4)}
 .done-fold summary{font-weight:600;color:var(--muted)}
 .task-meta .task-notes{flex-basis:100%;font-size:.82rem}

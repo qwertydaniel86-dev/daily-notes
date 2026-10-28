@@ -146,9 +146,7 @@
       return li;
     };
     const remLi = (r) => h('li', { class: 'rem-it' + (r.di && r.di.overdue ? ' overdue' : '') + (r.done ? ' done' : '') },
-      h('span', { class: 'rem-t' }, '🔔 ', r.label, localMark(r.it), r.di && !r.done ? h('span', { class: `chip ${r.di.cls}` }, r.di.overdue ? '⚠️ ' : '', r.di.label) : null),
-      F ? h('button', { type: 'button', class: 'tiny ghost rem-done', 'aria-label': (r.done ? 'Not done: ' : 'Done: ') + r.label,
-        onclick: () => { F.set({ sec: r.sec || 'reminders', op: 'done', item: r.it, label: r.label, val: !r.done }); if (!r.done) F.toast('✅ Reminder done – moved to “Done”'); } }, r.done ? '↶' : '✓') : null);
+      h('span', { class: 'rem-t' }, '🔔 ', r.label, localMark(r.it), r.di && !r.done ? h('span', { class: `chip ${r.di.cls}` }, r.di.overdue ? '⚠️ ' : '', r.di.label) : null));
     const schedLi = (it) => h('li', null, h('span', { class: 'time' }, realTime(pick(it, 'time', 'when')) || '•'), h('span', null, sText(it), pick(it, 'where', 'location', 'place') ? h('span', { class: 'muted small' }, ` 📍 ${pick(it, 'where', 'location', 'place')}`) : null, localMark(it)));
     const openT = todos.filter((x) => !x.done).sort(byDue), doneT = todos.filter((x) => x.done);
     const openR = rems.filter((r) => !r.done).sort(byDue), doneR = rems.filter((r) => r.done);
