@@ -298,14 +298,26 @@
   const TEXT_KEYS = ['item', 'event', 'title', 'text', 'task', 'name'];
   const ALARM_START = /^(?:[⏰🔔]\uFE0F?\s*)?(?:\d{1,2}[:.]?\d{2}\s*(?:h|hrs?)?\s*[-–—:]?\s*)?(?:(?:wake[- ]?up|morning)\s+)?alarm(?:\s+clock)?\s*(?:[:\-–—~@]|\b(?:at|for|to|set|on)\b|\d)/i;
   const ALARM_PAREN = /\(\s*(?:set\s+)?alarm\b[^)]*\)/i;
+  // A to-do whose text IS a reminder ("Remind me to…", "Reminder: …", 🔔 …) is a reminder: the UI shows it in Reminders, never as a tick-off task.
+  const REMINDER_TEXT_RE = /^\s*(?:🔔|remind\s+me\b|reminders?\s*[:\-–—]|reminder\s+to\b)/i;
   const entryText = (it) => (typeof it === 'string' ? str(it) : isObj(it) ? pick(it, ...TEXT_KEYS) : '');
   const isAlarm = (it) => {
     if (isObj(it) && /^alarms?$/i.test(pick(it, 'type', 'kind', 'category'))) return true;
     return ALARM_START.test(entryText(it));
   };
   const SEC_DATE = { today: ['date'], schedule: ['date'], reminders: ['due', 'date'], todo: ['due', 'deadline'], todos: ['due', 'deadline'], taskings: ['deadline', 'due'], tasks: ['deadline', 'due'] };
-  function stripAlarms(notes) {
-    if (!isObj(notes)) return notes;
+  // The free-text note lists (and weekly_review's lists) get the same standing rules as the dated lists. Money / health RECORDS
+  // (bills, transactions, health, finance…) are data, never filtered by topic or text.
+  const NOTE_LISTS = ['ideas', 'quick_notes', 'decisions', 'wins', 'finance_tips'];
+  function mapNoteLists(notes, fn, extra) {
+    const out = Object.assign({}, notes);
+    for (const sec of NOTE_LISTS.concat(extra || [])) if (Array.isArray(out[sec])) out[sec] = fn(out[sec]);
+    if (isObj(out.weekly_review)) { const w = Object.assign({}, out.weekly_review); for (const k of Object.keys(w)) if (Array.isArray(w[k])) w[k] = fn(w[k]); out.weekly_review = w; }
+    return out;
+  }
+  function stripAlarms(notes0) {
+    if (!isObj(notes0)) return notes0;
+    const notes = mapNoteLists(notes0, (xs) => xs.filter((it) => !isAlarm(it)));
     const out = Object.assign({}, notes);
     for (const k of Object.keys(out)) if (/^alarms?$/i.test(k)) delete out[k];
     const eventDates = new Set();
@@ -346,7 +358,7 @@
   }
   /* ---------- removed topics (Oct 2026): the MMPA and Law-school topics are gone for good ----------
      Hidden here – the one choke point every card, search and nudge reads through – even if notes.json still carries them. */
-  const REMOVED_RE = /\bmmpa\b|\blaw[\s-]*school\b|\bg-law\b/i;
+  const REMOVED_RE = /\bmmpa\b|\blaw[\s-]*school\b|\bg-law\b|\bcomprehensive[\s-]*exam/i;
   const REMOVED_KEYS = ['studies', 'mmpa', 'mmpa_exam_date'];
   const hasRemoved = (it) => {
     if (typeof it === 'string') return REMOVED_RE.test(it);
@@ -360,7 +372,7 @@
     for (const sec of ['goals', 'today', 'schedule', 'todo', 'todos', 'taskings', 'tasks', 'reminders', 'ideas', 'habits']) {
       if (Array.isArray(out[sec])) out[sec] = out[sec].filter((it) => !hasRemoved(it));
     }
-    return out;
+    return mapNoteLists(out, (xs) => xs.filter((it) => !hasRemoved(it)), ['links']);
   }
   /* ---------- one activity shows exactly once ----------
      Same calendar day, an event / tasking / to-do / reminder that says (substantially) the same thing as a higher-priority entry is
@@ -407,7 +419,8 @@
     return out;
   }
   const view = (notes, todayISO, nowHM) => autoDone(dedupe(dropRemoved(stripAlarms(notes))), todayISO, nowHM);
-  const api = { stripAlarms, dropRemoved, dedupe, autoDone, view, isAlarm, safeUrl, linkVal, txVal, leadVal, exVal, mpatVal, dailyVal, progVal, longDigits, isoOk, getProg, listOf, mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit,
+  const isReminderText = (it) => REMINDER_TEXT_RE.test(entryText(it));
+  const api = { isReminderText, stripAlarms, dropRemoved, dedupe, autoDone, view, isAlarm, safeUrl, linkVal, txVal, leadVal, exVal, mpatVal, dailyVal, progVal, longDigits, isoOk, getProg, listOf, mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit,
     SECS, TX_TYPES, TX_OUT, TX_IN, TX_ACCOUNTS, LEAD_STATUS, EX_TYPES, KIND: 'dn-edits-v1', OVERLAY_KIND: 'dn-overlay-v1' };
   root.EditsCore = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

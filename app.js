@@ -124,12 +124,14 @@
     const sNow = sched.filter((it) => { const iso = isoDate(it.date); return !iso || iso === t; }), sTom = sched.filter((it) => isoDate(it.date) === tm);
     const schedKeys = new Set(sched.map((it) => (isoDate(it.date) || t) + '|' + normT(sText(it))));
     const lbl = (it) => (typeof it === 'string' ? it : pick(it, 'item', 'task', 'text', 'title'));
-    const todos = arr(d.todo ?? d.todos).map((it, i) => {
+    const asReminder = (it) => !!window.EditsCore && window.EditsCore.isReminderText(it); // standing rule: a reminder is never a tick-off to-do
+    const todos = arr(d.todo ?? d.todos).filter((it) => !asReminder(it)).map((it, i) => {
       const label = lbl(it), tid = hid(`todo:${label}`), dataDone = typeof it === 'object' && !!it.done, legacy = !dataDone && !!tk[tid];
       return { it, i, label, tid, legacy, done: dataDone || legacy, di: typeof it === 'object' ? dueInfo(it.due ?? it.deadline, dataDone || legacy) : null };
     });
-    const rems = arr(d.reminders).map((it) => (typeof it === 'string' ? { item: it } : it)).filter((it) => it && typeof it === 'object')
-      .map((it) => ({ it, label: pick(it, 'item', 'text', 'title') || '(reminder)', done: !!it.done, di: dueInfo(it.due ?? it.date, !!it.done) }))
+    const rems = arr(d.reminders).map((it) => ({ it, sec: 'reminders' })).concat(arr(d.todo ?? d.todos).filter(asReminder).map((it) => ({ it, sec: 'todo' })))
+      .map((x) => ({ it: typeof x.it === 'string' ? { item: x.it } : x.it, sec: x.sec })).filter((x) => x.it && typeof x.it === 'object')
+      .map((x) => ({ it: x.it, sec: x.sec, label: pick(x.it, 'item', 'text', 'title', 'task') || '(reminder)', done: !!x.it.done, di: dueInfo(x.it.due ?? x.it.date ?? x.it.deadline, !!x.it.done) }))
       .filter((r) => !schedKeys.has((isoDate(r.it.due ?? r.it.date) || '') + '|' + normT(r.label))); // same as a schedule item → shown once
     const byDue = (a, b) => ((a.di && a.di.days != null ? a.di.days : 1e9) - (b.di && b.di.days != null ? b.di.days : 1e9)) || (a.i || 0) - (b.i || 0);
     const todoLi = (x) => {
@@ -146,7 +148,7 @@
     const remLi = (r) => h('li', { class: 'rem-it' + (r.di && r.di.overdue ? ' overdue' : '') + (r.done ? ' done' : '') },
       h('span', { class: 'rem-t' }, '🔔 ', r.label, localMark(r.it), r.di && !r.done ? h('span', { class: `chip ${r.di.cls}` }, r.di.overdue ? '⚠️ ' : '', r.di.label) : null),
       F ? h('button', { type: 'button', class: 'tiny ghost rem-done', 'aria-label': (r.done ? 'Not done: ' : 'Done: ') + r.label,
-        onclick: () => { F.set({ sec: 'reminders', op: 'done', item: r.it, label: r.label, val: !r.done }); if (!r.done) F.toast('✅ Reminder done – moved to “Done”'); } }, r.done ? '↶' : '✓') : null);
+        onclick: () => { F.set({ sec: r.sec || 'reminders', op: 'done', item: r.it, label: r.label, val: !r.done }); if (!r.done) F.toast('✅ Reminder done – moved to “Done”'); } }, r.done ? '↶' : '✓') : null);
     const schedLi = (it) => h('li', null, h('span', { class: 'time' }, realTime(pick(it, 'time', 'when')) || '•'), h('span', null, sText(it), pick(it, 'where', 'location', 'place') ? h('span', { class: 'muted small' }, ` 📍 ${pick(it, 'where', 'location', 'place')}`) : null, localMark(it)));
     const openT = todos.filter((x) => !x.done).sort(byDue), doneT = todos.filter((x) => x.done);
     const openR = rems.filter((r) => !r.done).sort(byDue), doneR = rems.filter((r) => r.done);

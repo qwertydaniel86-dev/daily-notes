@@ -76,7 +76,7 @@
     const order = Object.keys(WD1);
     return Object.keys(w).filter((k) => isObj(w[k]) && /^[a-z][a-z0-9_]{0,19}$/.test(k)).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)).map((k) => {
       const [ico, label, unit] = WD1[k] || ['📌', k.replace(/_/g, ' '), ''];
-      const req = D().num(w[k].req ?? w[k].required), cur = D().num(w[k].cur ?? w[k].current);
+      const req = D().num(w[k].req ?? w[k].required), cur = w[k].src === 'auto' ? D().num(w[k].cur) : null; // WD1 values come from the board feed only (src 'auto'); a typed notes.json cur is never shown
       return { k, ico, label, unit, req, cur, auto: w[k].src === 'auto', missing: w[k].src === 'auto-missing', pct: req && cur != null ? pct(cur, req) : null };
     });
   }
@@ -528,5 +528,5 @@
       goals: [safe(goalsCard, 'c-goals'), safe(habitProgressCard, 'c-habitprog')],
     };
   }
-  window.Progress = { mpatAuto, cards, loggedBetween, openExerciseLog, savingsMath, computeGoal, metricOf, flows, txList, vaStats, sheet };
+  window.Progress = { wd1Rows, mpatAuto, cards, loggedBetween, openExerciseLog, savingsMath, computeGoal, metricOf, flows, txList, vaStats, sheet };
 })();
