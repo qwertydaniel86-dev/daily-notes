@@ -13,7 +13,7 @@
   const SEEDS = [
     { id: 'seed-bible', name: 'Bible reading / devotion', emoji: '📖', color: 'sun', reminder: '05:30' },
     { id: 'seed-prayer', name: 'Prayer', emoji: '🙏', color: 'lav', type: 'count', target: 3, unit: 'times' },
-    { id: 'seed-exercise', name: 'Exercise', emoji: '🏃', color: 'mint', type: 'timer', target: 30, unit: 'min', frequency: { times_per_week: 4 } },
+    { id: 'seed-exercise', name: 'Exercise', emoji: '🏃', color: 'mint', type: 'timer', target: 45, unit: 'min', frequency: { times_per_week: 6 } },
     { id: 'seed-water', name: 'Water', emoji: '💧', color: 'aqua', type: 'count', target: 8, unit: 'glasses' },
     { id: 'seed-sleep', name: 'Sleep by 2300', emoji: '😴', color: 'lilac', reminder: '22:30' },
   ];
@@ -113,7 +113,7 @@
     const fromNotes = notesDefs(notes);
     s.habits = (fromNotes.length ? fromNotes : SEEDS.map((x) => normHabit(x, x.id))).filter((x) => !isMpat(x) && !isGone(x));
     fromNotes.forEach((n) => (s.known[n.id] = 1));
-    s.known._seeded = 1; s.known._mig_targets_v2 = today();
+    s.known._seeded = 1; s.known._mig_targets_v2 = today(); s.known._mig_exercise_v3 = today();
     return s;
   }
   function mergeNotes(notes) {
@@ -160,8 +160,19 @@
     S.habits.push(hb); RC = {};
     return true;
   }
+  // v3 (30 Oct 2026, Daniel's decision): Exercise goal 45 min × 6 days/week. A device that still holds the OLD default (timer 30 min, 4×/week)
+  // is moved once (old rule kept in _hist); a goal Daniel customised is left alone.
+  function migrateExercise() {
+    if (!S || S.known._mig_exercise_v3) return false;
+    const t = today(), hb = S.habits.find((x) => x.id === 'seed-exercise');
+    if (hb && hb.type === 'timer' && hb.target === 30 && hb.unit === 'min' && hb.freq.type === 'weekly' && hb.freq.times === 4) {
+      recordHist(hb, t); hb.target = 45; hb.freq = { type: 'weekly', times: 6 };
+    }
+    S.known._mig_exercise_v3 = t; RC = {};
+    return true;
+  }
   function migrate() {
-    const dropped = dropMpat() | ensureMpat(MEXT); // (non-short-circuit: both must run)
+    const dropped = dropMpat() | ensureMpat(MEXT) | migrateExercise(); // (non-short-circuit: all must run)
     if (!S || S.known._mig_targets_v2) return !!dropped;
     const t = today();
     const find = (id, re) => S.habits.find((x) => x.id === id) || S.habits.find((x) => re.test(x.name));
