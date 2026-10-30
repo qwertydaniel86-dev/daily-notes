@@ -644,3 +644,35 @@ button.tiny.ghost{background:rgba(255,255,255,.85);color:var(--ink);border:1px s
 .week .wd svg{max-width:100%;height:auto}
 .week .wk-nav{flex:none;padding:.2rem .25rem}
 @media (max-width:430px){.hb-row:has(.hb-ctls){flex-wrap:wrap}.hb-row .hb-ctls{flex:1 1 100%;justify-content:flex-end}}
+/* 💪 Fitness tab (read-only) */
+.ft-start{font-weight:700;margin:0 0 .5rem;overflow-wrap:anywhere}
+.ft-stats{grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr))}
+.ft-stat{min-width:0;overflow-wrap:anywhere}
+.ft-note{margin:.25rem 0 .5rem;overflow-wrap:anywhere}
+.ft-sec{margin:0 0 .6rem;min-width:0}
+.ft-today{background:rgba(255,255,255,.8);border:2px solid #2aa765;border-radius:16px;padding:.55rem .7rem}
+.ft-h{margin:0 0 .4rem;font-size:.95rem}
+.ft-now-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:.45rem}
+.ft-now-box{display:grid;gap:.1rem;align-content:start;background:rgba(42,167,101,.12);border-radius:12px;padding:.5rem .65rem;min-width:0;overflow-wrap:anywhere}
+.ft-k{font-size:.72rem;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:700}
+.ft-big{font-size:1.15rem;font-weight:800}
+.ft-small{font-size:.85rem;margin:.2rem 0 0}
+.ft-fold{min-width:0}
+.ft-body{padding:0 0 .35rem;min-width:0;overflow-wrap:anywhere}
+.ft-h4{margin:.5rem 0 .2rem;font-size:.9rem}
+.ft-fold ul.bullets{margin:.15rem 0 .35rem}
+.ft-tblwrap{max-width:100%;overflow-wrap:anywhere}
+.ft-tbl{table-layout:fixed}
+.ft-tbl th,.ft-tbl td{vertical-align:top;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
+.ft-tbl tbody th{font-size:.85rem;text-transform:none;color:var(--ink);font-weight:700}
+.ft-tbl thead th:first-child{width:34%}
+.ft-trk td{text-align:center}
+tr.ft-now>*{background:rgba(42,167,101,.18)}
+.ft-day{border-radius:12px;padding:.1rem .5rem;margin:.2rem -.5rem}
+.ft-day.ft-now{background:rgba(42,167,101,.15);box-shadow:inset 3px 0 0 #2aa765}
+.ft-alts,.ft-rules{margin-top:.5rem}
+.ft-goal{margin:.2rem 0 .4rem;font-size:.9rem}
+.ft-prio{margin:.2rem 0 .4rem;padding-left:1.25rem}
+.ft-prio li{margin:.15rem 0}
+.ft-mission{margin:.4rem 0 .2rem;padding:.55rem .7rem;border-radius:12px;background:rgba(42,167,101,.12);font-weight:600}
+.ft-upd{margin:.3rem 0 0;text-align:right}

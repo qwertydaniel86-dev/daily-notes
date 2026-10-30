@@ -484,6 +484,62 @@
     });
     const none = root.querySelector('.lk-none'); if (none) { none.hidden = shown > 0 || !terms.length; none.textContent = `No links match “${q}”.`; }
   }
+  /* ================= 💪 Fitness (read-only plan; the text lives in the encrypted notes.json `fitness` section – none of it is in this file) ================= */
+  const ftOpen = {}; // remembers which folds Daniel opened across re-renders (display only – nothing is stored)
+  function fitnessCard(d) {
+    const { h, card } = D();
+    const m = C.fitnessModel(d.fitness);
+    if (!m) return null;
+    const now = C.fitnessToday(m, today());
+    const ul = (xs, cls) => (xs.length ? h('ul', { class: 'bullets ' + (cls || '') }, xs.map((x) => h('li', null, x))) : null);
+    const note = (t) => (t ? h('p', { class: 'small muted ft-note' }, t) : null);
+    const fold = (key, title, count, kids, open) => {
+      const body = kids.filter(Boolean);
+      if (!body.length) return null;
+      return h('details', { class: 'm-fold ft-fold', id: 'ft-' + key, 'data-ft': key, open: (key in ftOpen ? ftOpen[key] : open) ? '' : null, ontoggle: (e) => { ftOpen[key] = e.target.open; } },
+        h('summary', null, h('span', null, title), count ? h('span', { class: 'muted small' }, count) : null), h('div', { class: 'ft-body' }, body));
+    };
+    const table = (cls, head, rows, hot) => h('div', { class: 'ft-tblwrap' }, h('table', { class: 'hl-tbl ft-tbl ' + cls }, h('thead', null, h('tr', null, head.map((c) => h('th', { scope: 'col' }, c)))),
+      h('tbody', null, rows.map((r, i) => h('tr', { class: hot === i ? 'ft-now' : null, 'aria-current': hot === i ? 'date' : null }, r.map((c, j) => (j === 0 ? h('th', { scope: 'row' }, c) : h('td', null, c))))))));
+    const secs = [];
+    // section 1: targets
+    secs.push(h('section', { class: 'ft-sec', id: 'ft-targets', 'data-ft': 'targets' },
+      m.start.line ? h('p', { class: 'ft-start' }, m.start.line) : null,
+      m.targets.length ? h('div', { class: 'm-stats ft-stats' }, m.targets.map((t) => h('div', { class: 'm-stat m-gross ft-stat' }, h('span', { class: 'm-stat-v' }, t.value), h('span', { class: 'm-stat-l' }, [t.label, t.unit, t.note].filter(Boolean).join(' · '))))) : null,
+      note(m.targetsNote), note(m.start.recommendation)));
+    // section 2: today (weekday in Asia/Manila → training day + lunch viand)
+    if (now && (now.training || now.viand)) {
+      const tr = now.training;
+      secs.push(h('section', { class: 'ft-sec ft-today', id: 'ft-today', 'data-ft': 'today' },
+        h('h3', { class: 'ft-h' }, 'Today · ', fmtD(now.iso)),
+        h('div', { class: 'ft-now-grid' },
+          tr ? h('div', { class: 'ft-now-box ft-now-train' }, h('span', { class: 'ft-k' }, '🏋️ Training'), h('strong', { class: 'ft-big' }, tr.name), tr.focus ? h('span', { class: 'muted small' }, tr.focus) : null, ul(tr.items, 'ft-small')) : null,
+          now.viand ? h('div', { class: 'ft-now-box ft-now-lunch' }, h('span', { class: 'ft-k' }, '🍛 Lunch viand'), h('strong', { class: 'ft-big' }, now.viand)) : null)));
+    }
+    const hotT = now ? m.training.findIndex((x) => x.di === now.di) : -1, hotV = now ? m.viands.findIndex((x) => x.di === now.di) : -1;
+    // section 3: daily food schedule
+    secs.push(fold('food', 'Daily food schedule', m.meals.length ? `${m.meals.length} meals` : '', [note(m.dietNote), ...m.meals.map((x) => h('div', { class: 'ft-meal' }, h('h4', { class: 'ft-h4' }, x.name), ul(x.items))), note(m.riceNote)], true));
+    // section 4: weekly viand rotation + canned alternatives + sodium note
+    secs.push(fold('viands', 'Weekly viand rotation', '', [m.viands.length ? table('ft-viands', ['Day', 'Lunch'], m.viands.map((v) => [v.day, v.lunch]), hotV) : null,
+      m.viandAlts.length ? h('div', { class: 'ft-alts' }, h('span', { class: 'ft-k' }, 'Canned alternatives'), ul(m.viandAlts)) : null, note(m.viandNote)], true));
+    // section 5: daily nutrition habits – a plain reference list (nothing to tick)
+    secs.push(fold('habits', 'Daily nutrition habits', '', [ul(m.habits, 'ft-habits'), note(m.habitsNote)], false));
+    // section 6: weekly training split + rules
+    secs.push(fold('training', 'Weekly training split', '', [note(m.trainingIntro), ...m.training.map((x, i) => h('div', { class: 'ft-day' + (i === hotT ? ' ft-now' : ''), 'aria-current': i === hotT ? 'date' : null },
+      h('h4', { class: 'ft-h4' }, `${x.day} · ${x.name}`), x.focus ? h('p', { class: 'small muted' }, x.focus) : null, ul(x.items))),
+      m.trainingRules.length ? h('div', { class: 'ft-rules' }, h('span', { class: 'ft-k' }, 'Training rules'), ul(m.trainingRules)) : null], true));
+    // section 7: monthly plan
+    secs.push(fold('months', 'Monthly plan', m.months.length ? `${m.months.length} months` : '', m.months.map((x) => h('div', { class: 'ft-month' },
+      h('h4', { class: 'ft-h4' }, [x.n ? `Month ${x.n}` : '', x.title].filter(Boolean).join(' · ')), x.subtitle ? h('p', { class: 'small muted' }, x.subtitle) : null, ul(x.items), x.goal ? h('p', { class: 'ft-goal' }, h('strong', null, 'Goal: '), x.goal) : null)), false));
+    // section 8: long-term milestones
+    secs.push(fold('milestones', 'Long-term milestones', '', [m.milestones.length ? table('ft-miles', ['Stage', 'Weight', 'Objective'], m.milestones.map((x) => [x.stage, x.weight || '—', x.objective || '—'])) : null, note(m.milestonesNote)], false));
+    // section 9: monthly progress tracker – READ-ONLY table; Denx fills it from notes.json, blank = "—", no inputs
+    secs.push(fold('tracker', 'Monthly progress tracker', '', m.tracker && m.tracker.rows.length ? [table('ft-trk', ['', ...m.tracker.columns], m.tracker.rows.map((r) => [r.label, ...r.cells])), note(m.tracker.note)] : [], false));
+    // section 10: priorities + the 30-day mission
+    secs.push(fold('priorities', 'Priorities & 30-day mission', '', [m.priorities.length ? h('ol', { class: 'ft-prio' }, m.priorities.map((x) => h('li', null, h('strong', null, x.title), x.detail ? ' – ' + x.detail : ''))) : null, note(m.prioritiesNote),
+      m.mission ? h('p', { class: 'ft-mission' }, m.mission) : null], true));
+    return card('aqua', '💪', 'Fitness', [...secs.filter(Boolean), m.updated ? h('p', { class: 'small muted ft-upd' }, 'Plan updated ', fmtD(m.updated, { weekday: undefined })) : null], { wide: true });
+  }
   function linksCard(d) {
     const { h, card, objs, pick, empty } = D();
     const xs = objs(d.links, 'title').map((it) => ({ it, title: pick(it, 'title', 'name'), url: C.safeUrl(pick(it, 'url', 'href')), cat: pick(it, 'category') || 'Other', note: pick(it, 'note') })).filter((x) => x.title || x.url);
@@ -516,7 +572,7 @@
   const KEY_CARD = { today: 'c-todo', schedule: 'c-todo', todo: 'c-todo', todos: 'c-todo', taskings: 'c-taskings', tasks: 'c-taskings', reminders: 'c-todo', duty_log: 'c-wd1', duty: 'c-wd1',
     wd1: 'c-wd1', studies: 'c-studies', mmpa: 'c-studies', mpat_log: 'c-mpat', mpat: 'c-mpat', ideas: 'c-ideas', verse: 'c-hero', bills: 'm-bills', bills_outlook: 'm-bills', bills_summary: 'm-bills',
     subscriptions: 'm-subscriptions', decisions: 'm-decisions', automations: 'm-automations', finance_tips: 'm-finance_tips', income: 'm-pay', debts: 'm-debts', balances: 'm-pay',
-    wins: 'c-review', weekly_review: 'c-review', goals: 'c-goals', health: 'c-health', quick_notes: 'c-quick_notes', links: 'c-links', finance: 'c-savings', va: 'c-va', transactions: 'm-txlog' };
+    wins: 'c-review', weekly_review: 'c-review', goals: 'c-goals', health: 'c-health', quick_notes: 'c-quick_notes', links: 'c-links', fitness: 'c-fitness', finance: 'c-savings', va: 'c-va', transactions: 'm-txlog' };
   const SKIP = new Set(['updated', 'version', 'schema', 'habits']);
   function buildIndex(d) {
     const idTok = D().idTok, out = [];
@@ -540,7 +596,7 @@
   }
   const LABEL = { today: 'Schedule', todo: 'To-do', taskings: 'Taskings', reminders: 'Reminders', duty_log: 'Duty log', wd1: 'WD1', studies: 'Studies', mpat_log: 'MPAT', ideas: 'Ideas', verse: 'Verse',
     bills: 'Bills', bills_outlook: 'Bills', subscriptions: 'Subscriptions', decisions: 'Decisions', automations: 'Automations', finance_tips: 'Strategy', income: 'Pay', debts: 'Debts', balances: 'Cash',
-    wins: 'Wins', weekly_review: 'Review', goals: 'Goals', health: 'Health', quick_notes: 'Quick notes', habits: 'Habits', links: 'Links', finance: 'Savings', va: 'VA hunt', transactions: 'Money log' };
+    wins: 'Wins', weekly_review: 'Review', goals: 'Goals', health: 'Health', quick_notes: 'Quick notes', habits: 'Habits', links: 'Links', fitness: 'Fitness', finance: 'Savings', va: 'VA hunt', transactions: 'Money log' };
   function marked(text, terms) {
     const { h } = D(), frag = document.createDocumentFragment();
     if (!terms.length) { frag.append(text); return frag; }
@@ -592,7 +648,7 @@
   }
 
   /* ================= section nav ================= */
-  const SECTIONS = [['today', '🏠', 'Today'], ['week', '🗓️', 'Week'], ['money', '💰', 'Money'], ['goals', '🎯', 'Goals'], ['links', '🔗', 'Links'], ['search', '🔍', 'Search']];
+  const SECTIONS = [['today', '🏠', 'Today'], ['week', '🗓️', 'Week'], ['money', '💰', 'Money'], ['goals', '🎯', 'Goals'], ['links', '🔗', 'Links'], ['fitness', '💪', 'Fitness'], ['search', '🔍', 'Search']];
   const ALIAS = { health: 'goals' }; // old deep links (#health) → the read-only Health card now lives on Goals
   function navEl() {
     const nav = document.getElementById('secnav');
@@ -686,6 +742,7 @@
       week: [safe(weekCard, 'c-week'), safe(reviewCard, 'c-review')],
       goals: [safe(healthCard, 'c-health')],
       links: [safe(linksCard, 'c-links')],
+      fitness: [safe(fitnessCard, 'c-fitness')],
       search: [safe(searchCard, 'c-search')],
     };
   }

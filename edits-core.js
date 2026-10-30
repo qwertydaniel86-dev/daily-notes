@@ -418,9 +418,109 @@
     for (const sec of secs) out[sec] = notes[sec].filter((_, i) => !hide[sec].has(i));
     return out;
   }
+  /* ================= 💪 Fitness tab (read-only plan; Denx keeps the `fitness` section in notes.json) =================
+     The plan text (weight, body fat, food, training) is private, so it lives ONLY in the encrypted notes.json – never in this public file.
+     fitnessModel(raw)  → a clean, display-ready model (or null): strings trimmed, duplicates removed, anything that would break a standing
+                          rule dropped (tick-boxes / "x/8" counters / "Reset checklist" / "Copy monthly records" / alarm lines), tracker blanks = "—".
+     fitnessToday(m,iso)→ today's (Asia/Manila date passed in by the caller) training day + lunch viand, picked from the weekday.
+     fitnessCheck(raw)  → {errors, warnings} for tools/validate.mjs. */
+  const FIT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const FIT_OFFENCE = /^\s*(?:\[\s*[xX✓✔]?\s*\]|[☐☑☒✓✔])|[☐☑☒]|\b\d+\s*\/\s*\d+\b|reset\s+checklist|copy\s+monthly\s+records/i;
+  const fitOffence = (t) => FIT_OFFENCE.test(t) || ALARM_START.test(str(t)) || ALARM_PAREN.test(str(t));
+  const fitText = (v) => { const t = str(v).replace(/\s+/g, ' ').trim(); return t && !fitOffence(t) ? t : ''; };
+  const fitKey = (v) => String(v).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const fitUniq = (xs, keyOf) => { const seen = new Set(); return xs.filter((x) => { const k = keyOf(x); if (!k || seen.has(k)) return false; seen.add(k); return true; }); };
+  const fitStrs = (v) => fitUniq((Array.isArray(v) ? v : []).map(fitText).filter(Boolean), fitKey);
+  const fitObjs = (v, make, keyOf) => fitUniq((Array.isArray(v) ? v : []).map((x) => (isObj(x) ? make(x) : null)).filter(Boolean), keyOf);
+  const fitDayIdx = (s) => { const k = str(s).slice(0, 3).toLowerCase(); return FIT_DAYS.findIndex((d) => d.toLowerCase() === k); };
+  function fitnessModel(raw) {
+    if (!isObj(raw)) return null;
+    const T = (k) => fitText(raw[k]);
+    const start = isObj(raw.start) ? { line: fitText(raw.start.line), recommendation: fitText(raw.start.recommendation) } : { line: '', recommendation: '' };
+    const trk = isObj(raw.tracker) ? raw.tracker : null;
+    const columns = trk ? fitStrs(trk.columns) : [];
+    const m = {
+      updated: dayOf(raw.updated) || '',
+      start,
+      targets: fitObjs(raw.targets, (x) => { const label = fitText(x.label), value = fitText(x.value); return label && value ? { label, value, unit: fitText(x.unit), note: fitText(x.note) } : null; }, (x) => fitKey(x.label)),
+      targetsNote: T('targets_note'), dietNote: T('diet_note'),
+      meals: fitObjs(raw.meals, (x) => { const name = fitText(x.name), items = fitStrs(x.items); return name && items.length ? { name, items } : null; }, (x) => fitKey(x.name)),
+      riceNote: T('rice_note'),
+      viands: fitObjs(raw.viands, (x) => { const di = fitDayIdx(x.day), lunch = fitText(x.lunch); return di >= 0 && lunch ? { di, day: FIT_DAYS[di], lunch } : null; }, (x) => String(x.di)),
+      viandAlts: fitStrs(raw.viand_alternatives), viandNote: T('viand_note'),
+      habits: fitStrs(raw.habits), habitsNote: T('habits_note'),
+      trainingIntro: T('training_intro'),
+      training: fitObjs(raw.training, (x) => { const di = fitDayIdx(x.day), name = fitText(x.name); return di >= 0 && name ? { di, day: FIT_DAYS[di], name, focus: fitText(x.focus), items: fitStrs(x.items) } : null; }, (x) => String(x.di)),
+      trainingRules: fitStrs(raw.training_rules),
+      months: fitObjs(raw.months, (x) => { const n = parseInt(x.n, 10), title = fitText(x.title); return title ? { n: n > 0 ? n : 0, title, subtitle: fitText(x.subtitle), items: fitStrs(x.items), goal: fitText(x.goal) } : null; }, (x) => 'n' + (x.n || fitKey(x.title))),
+      milestones: fitObjs(raw.milestones, (x) => { const stage = fitText(x.stage); return stage ? { stage, weight: fitText(x.weight), objective: fitText(x.objective) } : null; }, (x) => fitKey(x.stage)),
+      milestonesNote: T('milestones_note'),
+      tracker: trk && columns.length ? {
+        columns,
+        rows: fitObjs(trk.rows, (x) => { const label = fitText(x.label); if (!label) return null; const vs = Array.isArray(x.values) ? x.values : []; return { label, cells: columns.map((_, i) => fitText(vs[i]) || '—') }; }, (x) => fitKey(x.label)),
+        note: fitText(trk.note) } : null,
+      priorities: fitObjs(raw.priorities, (x) => { const title = fitText(x.title); return title ? { title, detail: fitText(x.detail) } : null; }, (x) => fitKey(x.title)),
+      prioritiesNote: T('priorities_note'), mission: T('mission'),
+    };
+    m.months.sort((a, b) => (a.n || 99) - (b.n || 99));
+    m.viands.sort((a, b) => a.di - b.di); m.training.sort((a, b) => a.di - b.di);
+    const has = m.start.line || m.start.recommendation || m.targets.length || m.meals.length || m.viands.length || m.habits.length || m.training.length || m.months.length || m.milestones.length || (m.tracker && m.tracker.rows.length) || m.priorities.length || m.mission;
+    return has ? m : null;
+  }
+  function fitnessToday(m, iso) {
+    if (!m || !isoOk(iso)) return null;
+    const [y, mo, d] = iso.split('-').map(Number);
+    const di = (new Date(Date.UTC(y, mo - 1, d)).getUTCDay() + 6) % 7;
+    return { iso, di, day: FIT_DAYS[di], training: m.training.find((x) => x.di === di) || null, viand: (m.viands.find((x) => x.di === di) || {}).lunch || '' };
+  }
+  function fitnessCheck(raw) {
+    const errors = [], warnings = [];
+    if (raw == null) { warnings.push('no "fitness" section – the 💪 Fitness tab shows "Nothing here yet" (publish keeps the last published one; README → For Denx: keep "fitness")'); return { errors, warnings }; }
+    if (!isObj(raw)) { errors.push('"fitness" must be an object (README → For Denx → Fitness tab)'); return { errors, warnings }; }
+    const LISTS = ['targets', 'meals', 'viands', 'viand_alternatives', 'habits', 'training', 'training_rules', 'months', 'milestones', 'priorities'];
+    for (const k of LISTS) if (raw[k] != null && !Array.isArray(raw[k])) errors.push(`fitness.${k} must be an array`);
+    if (raw.start != null && !isObj(raw.start)) errors.push('fitness.start must be an object {line, recommendation}');
+    if (raw.tracker != null && !isObj(raw.tracker)) errors.push('fitness.tracker must be an object {columns, rows:[{label, values}], note}');
+    const objs = (k) => (Array.isArray(raw[k]) ? raw[k] : []);
+    const strsOf = (k) => (Array.isArray(raw[k]) ? raw[k] : []);
+    const scan = (where, v) => { if (typeof v === 'string' && fitOffence(v)) warnings.push(`fitness.${where} looks like a tick-box / counter / alarm line – the site drops it (standing rules)`); if (typeof v === 'string' && longDigits(v)) warnings.push(`fitness.${where} has a long digit run – no account / ID numbers please`); };
+    objs('targets').forEach((x, i) => { if (!isObj(x)) return errors.push(`fitness.targets[${i}] must be an object {label, value, unit, note}`); if (!str(x.label) || !str(x.value)) warnings.push(`fitness.targets[${i}] needs "label" and "value" – skipped otherwise`); });
+    objs('meals').forEach((x, i) => { if (!isObj(x)) return errors.push(`fitness.meals[${i}] must be an object {name, items[]}`); if (!Array.isArray(x.items)) errors.push(`fitness.meals[${i}].items must be an array`); });
+    for (const k of ['viands', 'training']) objs(k).forEach((x, i) => { if (!isObj(x)) return errors.push(`fitness.${k}[${i}] must be an object`); if (fitDayIdx(x.day) < 0) warnings.push(`fitness.${k}[${i}].day "${str(x.day)}" should be Mon…Sun – skipped otherwise`); });
+    objs('training').forEach((x, i) => { if (isObj(x) && x.items != null && !Array.isArray(x.items)) errors.push(`fitness.training[${i}].items must be an array`); });
+    objs('months').forEach((x, i) => { if (!isObj(x)) return errors.push(`fitness.months[${i}] must be an object {n, title, subtitle, items[], goal}`); if (x.items != null && !Array.isArray(x.items)) errors.push(`fitness.months[${i}].items must be an array`); });
+    for (const k of ['milestones', 'priorities']) objs(k).forEach((x, i) => { if (!isObj(x)) errors.push(`fitness.${k}[${i}] must be an object`); });
+    if (isObj(raw.tracker)) {
+      const t = raw.tracker;
+      if (!Array.isArray(t.columns) || !t.columns.length) errors.push('fitness.tracker.columns must be a non-empty array (e.g. ["Month 1","Month 2","Month 3"])');
+      if (!Array.isArray(t.rows)) errors.push('fitness.tracker.rows must be an array of {label, values[]}');
+      else t.rows.forEach((r, i) => {
+        if (!isObj(r)) return errors.push(`fitness.tracker.rows[${i}] must be an object {label, values[]}`);
+        if (!Array.isArray(r.values)) errors.push(`fitness.tracker.rows[${i}].values must be an array (null = not measured yet)`);
+        else if (Array.isArray(t.columns) && r.values.length !== t.columns.length) errors.push(`fitness.tracker.rows[${i}].values has ${r.values.length} cell(s) but there are ${t.columns.length} column(s)`);
+        else r.values.forEach((v, j) => { if (v != null && !['string', 'number'].includes(typeof v)) errors.push(`fitness.tracker.rows[${i}].values[${j}] must be a string, number or null`); else scan(`tracker.rows[${i}].values[${j}]`, v); });
+      });
+    }
+    if (!errors.length) {
+      for (const k of ['viand_alternatives', 'habits', 'training_rules']) strsOf(k).forEach((x, i) => { if (typeof x !== 'string') warnings.push(`fitness.${k}[${i}] should be a plain string`); else scan(`${k}[${i}]`, x); });
+      for (const k of ['targets_note', 'diet_note', 'rice_note', 'viand_note', 'habits_note', 'training_intro', 'milestones_note', 'priorities_note', 'mission']) scan(k, raw[k]);
+      objs('meals').forEach((x, i) => (x.items || []).forEach((v, j) => scan(`meals[${i}].items[${j}]`, v)));
+      objs('training').forEach((x, i) => (x.items || []).forEach((v, j) => scan(`training[${i}].items[${j}]`, v)));
+      objs('months').forEach((x, i) => (x.items || []).forEach((v, j) => scan(`months[${i}].items[${j}]`, v)));
+      const m = fitnessModel(raw);
+      if (!m) warnings.push('fitness has no usable content – the tab shows "Nothing here yet"');
+      else {
+        const miss = [['targets', m.targets.length], ['viands', m.viands.length], ['training', m.training.length], ['months', m.months.length], ['milestones', m.milestones.length], ['tracker', m.tracker && m.tracker.rows.length], ['habits', m.habits.length]].filter((x) => !x[1]).map((x) => x[0]);
+        if (miss.length) warnings.push(`fitness is missing / empty: ${miss.join(', ')} (those sections are not shown)`);
+        for (const k of ['viands', 'training']) if (m[k].length && m[k].length < 7) warnings.push(`fitness.${k} covers ${m[k].length} of 7 days – the "Today" card shows nothing on the others`);
+        if (!m.updated) warnings.push('fitness.updated should be YYYY-MM-DD (the day Denx last refreshed the plan)');
+      }
+    }
+    return { errors, warnings };
+  }
   const view = (notes, todayISO, nowHM) => autoDone(dedupe(dropRemoved(stripAlarms(notes))), todayISO, nowHM);
   const isReminderText = (it) => REMINDER_TEXT_RE.test(entryText(it));
-  const api = { isReminderText, stripAlarms, dropRemoved, dedupe, autoDone, view, isAlarm, safeUrl, linkVal, txVal, leadVal, exVal, mpatVal, dailyVal, progVal, longDigits, isoOk, getProg, listOf, mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit,
+  const api = { fitnessModel, fitnessToday, fitnessCheck, FIT_DAYS, isReminderText, stripAlarms, dropRemoved, dedupe, autoDone, view, isAlarm, safeUrl, linkVal, txVal, leadVal, exVal, mpatVal, dailyVal, progVal, longDigits, isoOk, getProg, listOf, mergeSync, syncSig, hid, keyOf, hashKey, textOf, findIndex, isReflected, apply, describe, validEdit,
     SECS, TX_TYPES, TX_OUT, TX_IN, TX_ACCOUNTS, LEAD_STATUS, EX_TYPES, KIND: 'dn-edits-v1', OVERLAY_KIND: 'dn-overlay-v1' };
   root.EditsCore = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

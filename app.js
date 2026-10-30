@@ -593,7 +593,7 @@
 
   const KNOWN = new Set(['updated', 'auto', 'verse', 'today', 'schedule', 'todo', 'todos', 'taskings', 'tasks', 'duty_log', 'duty', 'wd1', 'studies', 'mmpa', 'mmpa_exam_date', 'mpat_log', 'mpat', 'ideas', 'reminders', 'habits', 'version', 'schema',
     'bills', 'bills_summary', 'bills_outlook', 'subscriptions', 'decisions', 'automations', 'finance_tips', 'income', 'balances', 'debts',
-    'wins', 'weekly_review', 'goals', 'health', 'quick_notes', 'links', 'finance', 'va', 'transactions']);
+    'wins', 'weekly_review', 'goals', 'health', 'quick_notes', 'links', 'fitness', 'finance', 'va', 'transactions']);
   function extraCards(d) {
     // Unknown top-level sections are shown generically so nothing the writer adds is silently lost.
     // Id-like keys are hidden here too (token match, so words like "ideas"/"video" are not caught): tin, gsis, pag-ibig, philhealth, id, account, number.
@@ -620,7 +620,7 @@
     const tag = (sec, id) => (el) => { if (el) { if (id && !el.id) el.id = id; el.dataset.sec = sec; } return el; };
     const money = (list, secOf) => list.map(([k, fn]) => { let c; try { c = fn(d); if (!c) return null; c.id = 'm-' + k; } catch (e) { console.error(e); c = card('mist', '⚠️', k.replace(/_/g, ' '), empty('Could not render this section.')); }
       c.dataset.sec = secOf ? secOf(k) : 'money'; return c; }).filter(Boolean);
-    const fx = F ? F.cards(d) : { todayEnd: [], todayMid: [], week: [], goals: [], links: [], search: [] };
+    const fx = F ? F.cards(d) : { todayEnd: [], todayMid: [], week: [], goals: [], links: [], fitness: [], search: [] };
     const px = window.Progress ? window.Progress.cards(d) : { today: [], money: [], goals: [] };
     const habitsCard = window.Habits ? window.Habits.el() : null;
     const T = (fn, id) => tag('today', id)(safe(fn));
@@ -631,7 +631,7 @@
       ...(fx.week || []).map(tag('week')), ...money(moneyCardsLate(d), () => 'week'),
       ...money(moneyCards(d)), ...(px.money || []).map(tag('money')),
       ...(px.goals || []).map(tag('goals')), ...(fx.goals || []).map(tag('goals')),
-      ...(fx.links || []).map(tag('links')), ...(fx.search || []).map(tag('search')),
+      ...(fx.links || []).map(tag('links')), ...(fx.fitness || []).map(tag('fitness')), ...(fx.search || []).map(tag('search')),
       ...[].concat(safe(extraCards)).map(tag('today')), ...(fx.todayEnd || []).map(tag('today'))].filter(Boolean));
     $('updated').textContent = str(d.updated) ? '⟳ ' + fmtUpdated(str(d.updated)) : '';
     if (F) F.afterRender(d);
