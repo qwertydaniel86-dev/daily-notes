@@ -517,6 +517,20 @@
           now.viand ? h('div', { class: 'ft-now-box ft-now-lunch' }, h('span', { class: 'ft-k' }, '🍛 Lunch viand'), h('strong', { class: 'ft-big' }, now.viand)) : null)));
     }
     const hotT = now ? m.training.findIndex((x) => x.di === now.di) : -1, hotV = now ? m.viands.findIndex((x) => x.di === now.di) : -1;
+    // section 2b: physique goals (optional – hidden when `fitness.physique` is absent). The V-taper ratio is computed by the model from shoulders ÷ waist.
+    if (m.physique) {
+      const ph = m.physique, rt = ph.ratio, dash = (v) => v || '—';
+      secs.push(fold('physique', 'Physique goals', ph.rows.length ? `${ph.rows.length} measurements` : '', [
+        ph.targets.length ? h('div', { class: 'm-stats ft-stats ft-ptiles' }, ph.targets.map((t) => h('div', { class: 'm-stat m-gross ft-stat ft-ptile' }, h('span', { class: 'm-stat-v' }, t.value), h('span', { class: 'm-stat-l' }, t.label)))) : null,
+        rt ? h('div', { class: 'ft-ratio' }, h('span', { class: 'ft-k' }, 'V-taper ratio · shoulders ÷ waist'),
+          h('div', { class: 'ft-ratio-row' }, h('strong', { class: 'ft-big ft-ratio-now' }, dash(rt.cur)), h('span', { class: 'muted small' }, 'now →'), h('strong', { class: 'ft-big ft-ratio-target' }, dash(rt.target)), h('span', { class: 'muted small' }, 'target')),
+          rt.cur && rt.target ? h('div', { class: 'ft-bar', 'aria-hidden': 'true' }, h('i', { style: { width: rt.pct + '%' } })) : null,
+          rt.gap ? h('p', { class: 'small muted ft-ratio-gap' }, `Gap ${rt.gap}. Shoulders needed at the current waist: ${rt.needShoulders}${rt.unit ? ' ' + rt.unit : ''}.`) : null) : null,
+        ph.rows.length ? h('div', { class: 'ft-tblwrap' }, h('table', { class: 'hl-tbl ft-tbl ft-phys' }, h('thead', null, h('tr', null, ['Measure', 'Now', 'Target', 'Gap'].map((c) => h('th', { scope: 'col' }, c)))),
+          h('tbody', null, ph.rows.map((r) => h('tr', null, h('th', { scope: 'row' }, r.label, r.unit ? h('span', { class: 'ft-unit' }, ' ' + r.unit) : null), h('td', null, dash(r.current)), h('td', null, dash(r.target)), h('td', { class: 'ft-gap' }, dash(r.gap))))))) : null,
+        ph.emphasis.length ? h('div', { class: 'ft-alts' }, h('span', { class: 'ft-k' }, 'Training emphasis'), ul(ph.emphasis, 'ft-emph')) : null,
+        ph.notes.length ? h('div', { class: 'ft-pnotes' }, ph.notes.map(note)) : null], true));
+    }
     // section 3: daily food schedule
     secs.push(fold('food', 'Daily food schedule', m.meals.length ? `${m.meals.length} meals` : '', [note(m.dietNote), ...m.meals.map((x) => h('div', { class: 'ft-meal' }, h('h4', { class: 'ft-h4' }, x.name), ul(x.items))), note(m.riceNote)], true));
     // section 4: weekly viand rotation + canned alternatives + sodium note

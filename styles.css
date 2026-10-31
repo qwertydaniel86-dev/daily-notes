@@ -668,7 +668,7 @@ button.tiny.ghost{background:rgba(255,255,255,.85);color:var(--ink);border:1px s
 .ft-tbl thead th:first-child{width:34%}
 .ft-trk td{text-align:center}
 tr.ft-now>*{background:rgba(42,167,101,.18)}
-.ft-day{border-radius:12px;padding:.1rem .5rem;margin:.2rem -.5rem}
+.ft-day{border-radius:12px;padding:.1rem .5rem;margin:.2rem 0}
 .ft-day.ft-now{background:rgba(42,167,101,.15);box-shadow:inset 3px 0 0 #2aa765}
 .ft-alts,.ft-rules{margin-top:.5rem}
 .ft-goal{margin:.2rem 0 .4rem;font-size:.9rem}
@@ -676,3 +676,20 @@ tr.ft-now>*{background:rgba(42,167,101,.18)}
 .ft-prio li{margin:.15rem 0}
 .ft-mission{margin:.4rem 0 .2rem;padding:.55rem .7rem;border-radius:12px;background:rgba(42,167,101,.12);font-weight:600}
 .ft-upd{margin:.3rem 0 0;text-align:right}
+.ft-ptiles{margin-bottom:.5rem}
+.ft-ratio{background:rgba(42,167,101,.12);border-radius:12px;padding:.5rem .65rem;margin:0 0 .5rem;min-width:0;overflow-wrap:anywhere}
+.ft-ratio-row{display:flex;align-items:baseline;gap:.4rem;flex-wrap:wrap}
+.ft-bar{height:.5rem;border-radius:99px;background:rgba(0,0,0,.1);overflow:hidden;margin:.35rem 0 .2rem}
+.ft-bar i{display:block;height:100%;background:#2aa765;border-radius:99px}
+.ft-ratio-gap{margin:.1rem 0 0}
+.ft-phys{margin:0 0 .5rem}
+.ft-phys thead th:first-child{width:31%}
+.ft-phys thead th:nth-child(2){width:17%}
+.ft-phys thead th:nth-child(3){width:24%}
+.ft-phys th,.ft-phys td{padding:.35rem .3rem;hyphens:none;word-break:normal}
+.ft-phys td{text-align:center;font-size:.8rem}
+.ft-phys tbody th{font-size:.8rem}
+.ft-phys .ft-unit{display:block}
+.ft-unit{font-weight:400;color:var(--muted);font-size:.72rem}
+.ft-gap{font-weight:600}
+.ft-pnotes{margin-top:.4rem}

@@ -433,6 +433,34 @@
   const fitStrs = (v) => fitUniq((Array.isArray(v) ? v : []).map(fitText).filter(Boolean), fitKey);
   const fitObjs = (v, make, keyOf) => fitUniq((Array.isArray(v) ? v : []).map((x) => (isObj(x) ? make(x) : null)).filter(Boolean), keyOf);
   const fitDayIdx = (s) => { const k = str(s).slice(0, 3).toLowerCase(); return FIT_DAYS.findIndex((d) => d.toLowerCase() === k); };
+  /* physique goals (optional fitness.physique): targets summary, V-taper ratio COMPUTED from shoulders ÷ waist (never read from the data),
+     measurement rows with current / target / gap. Pure display model – no text of Daniel's is in this file. */
+  const fitNum = (v) => { const n = typeof v === 'number' ? v : /^-?\d+(?:\.\d+)?$/.test(str(v)) ? parseFloat(str(v)) : NaN; return Number.isFinite(n) ? n : NaN; };
+  const fitRange = (v) => { const n = fitNum(v); if (!Number.isNaN(n)) return [n, n]; const m = /^(-?\d+(?:\.\d+)?)\s*[–—-]\s*(-?\d+(?:\.\d+)?)$/.exec(str(v)); return m ? [parseFloat(m[1]), parseFloat(m[2])].sort((a, b) => a - b) : null; };
+  const fitFmt = (n, d = 1) => String(parseFloat(n.toFixed(d))).replace('-', '−');
+  const fitSigned = (n) => (Math.abs(n) < 0.05 ? '0' : (n > 0 ? '+' : '') + fitFmt(n));
+  function fitGap(cur, tgt) {
+    const c = fitRange(cur), t = fitRange(tgt); if (!c || !t) return '';
+    const lo = t[0] - c[1], hi = t[1] - c[0];
+    if (lo < -0.05 && hi > 0.05) return 'on target';
+    return Math.abs(lo - hi) < 0.05 ? fitSigned(lo) : `${fitSigned(lo)} to ${fitSigned(hi)}`;
+  }
+  const FIT_TG = [['weight_kg', 'Target weight', ' kg'], ['body_fat_pct', 'Target body fat', '%'], ['height_cm', 'Height', ' cm'], ['vtaper_ratio', 'V-taper ratio', '']];
+  function fitPhysique(raw) {
+    if (!isObj(raw)) return null;
+    const tg = isObj(raw.targets) ? raw.targets : {};
+    const targets = FIT_TG.map(([k, label, unit]) => { const n = fitNum(tg[k]); return n > 0 ? { label, value: fitFmt(n, 3) + unit } : null; }).filter(Boolean);
+    const rawRows = Array.isArray(raw.measurements) ? raw.measurements.filter(isObj) : [];
+    const rows = fitUniq(rawRows.map((x) => { const label = fitText(x.label), current = fitText(x.current), target = fitText(x.target); return label && (current || target) ? { label, unit: fitText(x.unit), current, target, gap: fitGap(current, target) } : null; }).filter(Boolean), (x) => fitKey(x.label));
+    const pick = (id, re) => { const x = rawRows.find((r) => str(r.id).toLowerCase() === id) || rawRows.find((r) => re.test(str(r.label))); return x ? fitNum(x.current) : NaN; };
+    const sh = pick('shoulders', /^shoulders?$/i), wa = pick('waist', /^waist\b/i), want = fitNum(tg.vtaper_ratio);
+    const unitOf = (id) => { const x = rawRows.find((r) => str(r.id).toLowerCase() === id); return x ? fitText(x.unit) : ''; };
+    const cur = sh > 0 && wa > 0 ? sh / wa : NaN, ok2 = want > 0;
+    const ratio = !(cur > 0) && !ok2 ? null : { cur: cur > 0 ? cur.toFixed(2) : '', target: ok2 ? fitFmt(want, 3) : '', gap: cur > 0 && ok2 ? Math.abs(want - cur).toFixed(2) : '', pct: cur > 0 && ok2 ? Math.max(0, Math.min(100, Math.round((cur / want) * 100))) : 0,
+      needShoulders: cur > 0 && ok2 ? fitFmt(want * wa, 1) : '', unit: unitOf('shoulders') };
+    const p = { updated: dayOf(raw.updated) || '', targets, ratio, rows, emphasis: fitStrs(raw.emphasis), notes: fitStrs(raw.notes) };
+    return targets.length || ratio || rows.length || p.emphasis.length || p.notes.length ? p : null;
+  }
   function fitnessModel(raw) {
     if (!isObj(raw)) return null;
     const T = (k) => fitText(raw[k]);
@@ -461,10 +489,11 @@
         note: fitText(trk.note) } : null,
       priorities: fitObjs(raw.priorities, (x) => { const title = fitText(x.title); return title ? { title, detail: fitText(x.detail) } : null; }, (x) => fitKey(x.title)),
       prioritiesNote: T('priorities_note'), mission: T('mission'),
+      physique: fitPhysique(raw.physique),
     };
     m.months.sort((a, b) => (a.n || 99) - (b.n || 99));
     m.viands.sort((a, b) => a.di - b.di); m.training.sort((a, b) => a.di - b.di);
-    const has = m.start.line || m.start.recommendation || m.targets.length || m.meals.length || m.viands.length || m.habits.length || m.training.length || m.months.length || m.milestones.length || (m.tracker && m.tracker.rows.length) || m.priorities.length || m.mission;
+    const has = m.start.line || m.start.recommendation || m.targets.length || m.meals.length || m.viands.length || m.habits.length || m.training.length || m.months.length || m.milestones.length || (m.tracker && m.tracker.rows.length) || m.priorities.length || m.mission || m.physique;
     return has ? m : null;
   }
   function fitnessToday(m, iso) {
@@ -482,6 +511,16 @@
     if (raw.start != null && !isObj(raw.start)) errors.push('fitness.start must be an object {line, recommendation}');
     if (raw.tracker != null && !isObj(raw.tracker)) errors.push('fitness.tracker must be an object {columns, rows:[{label, values}], note}');
     const objs = (k) => (Array.isArray(raw[k]) ? raw[k] : []);
+    const ph = raw.physique;
+    if (ph != null) {
+      if (!isObj(ph)) errors.push('fitness.physique must be an object {targets, measurements[], emphasis[], notes[]}');
+      else {
+        for (const k of ['measurements', 'emphasis', 'notes']) if (ph[k] != null && !Array.isArray(ph[k])) errors.push(`fitness.physique.${k} must be an array`);
+        if (ph.targets != null && !isObj(ph.targets)) errors.push('fitness.physique.targets must be an object {weight_kg, body_fat_pct, height_cm, vtaper_ratio}');
+        if (Array.isArray(ph.measurements)) ph.measurements.forEach((x, i) => { if (!isObj(x)) return errors.push(`fitness.physique.measurements[${i}] must be an object {label, unit, current, target}`);
+          for (const k of ['current', 'target']) if (x[k] != null && !['string', 'number'].includes(typeof x[k])) errors.push(`fitness.physique.measurements[${i}].${k} must be a number or text`); });
+      }
+    }
     const strsOf = (k) => (Array.isArray(raw[k]) ? raw[k] : []);
     const scan = (where, v) => { if (typeof v === 'string' && fitOffence(v)) warnings.push(`fitness.${where} looks like a tick-box / counter / alarm line – the site drops it (standing rules)`); if (typeof v === 'string' && longDigits(v)) warnings.push(`fitness.${where} has a long digit run – no account / ID numbers please`); };
     objs('targets').forEach((x, i) => { if (!isObj(x)) return errors.push(`fitness.targets[${i}] must be an object {label, value, unit, note}`); if (!str(x.label) || !str(x.value)) warnings.push(`fitness.targets[${i}] needs "label" and "value" – skipped otherwise`); });
@@ -502,6 +541,17 @@
       });
     }
     if (!errors.length) {
+      if (isObj(ph)) {
+        (ph.measurements || []).forEach((x, i) => { scan(`physique.measurements[${i}].label`, x.label); scan(`physique.measurements[${i}].current`, x.current); scan(`physique.measurements[${i}].target`, x.target); });
+        for (const k of ['emphasis', 'notes']) (ph[k] || []).forEach((x, i) => scan(`physique.${k}[${i}]`, x));
+        const pm = fitPhysique(ph);
+        if (!pm) warnings.push('fitness.physique has no usable content – the Physique goals section is not shown');
+        else {
+          if (!pm.ratio || !pm.ratio.cur) warnings.push('fitness.physique has no numeric shoulders and waist (measurements with id "shoulders" and "waist", current as a number) – the current V-taper ratio is not shown');
+          if (!pm.ratio || !pm.ratio.target) warnings.push('fitness.physique.targets.vtaper_ratio is missing – the target ratio is not shown');
+          if (!pm.updated) warnings.push('fitness.physique.updated should be YYYY-MM-DD');
+        }
+      }
       for (const k of ['viand_alternatives', 'habits', 'training_rules']) strsOf(k).forEach((x, i) => { if (typeof x !== 'string') warnings.push(`fitness.${k}[${i}] should be a plain string`); else scan(`${k}[${i}]`, x); });
       for (const k of ['targets_note', 'diet_note', 'rice_note', 'viand_note', 'habits_note', 'training_intro', 'milestones_note', 'priorities_note', 'mission']) scan(k, raw[k]);
       objs('meals').forEach((x, i) => (x.items || []).forEach((v, j) => scan(`meals[${i}].items[${j}]`, v)));
