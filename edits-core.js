@@ -436,7 +436,7 @@
   /* physique goals (optional fitness.physique): targets summary, V-taper ratio COMPUTED from shoulders ÷ waist (never read from the data),
      measurement rows with current / target / gap. Pure display model – no text of Daniel's is in this file. */
   const fitNum = (v) => { const n = typeof v === 'number' ? v : /^-?\d+(?:\.\d+)?$/.test(str(v)) ? parseFloat(str(v)) : NaN; return Number.isFinite(n) ? n : NaN; };
-  const fitRange = (v) => { const n = fitNum(v); if (!Number.isNaN(n)) return [n, n]; const m = /^(-?\d+(?:\.\d+)?)\s*[–—-]\s*(-?\d+(?:\.\d+)?)$/.exec(str(v)); return m ? [parseFloat(m[1]), parseFloat(m[2])].sort((a, b) => a - b) : null; };
+  const fitRange = (v0) => { const v = typeof v0 === 'string' ? v0.replace(/^\s*[~≈]\s*/, '') : v0; const n = fitNum(v); if (!Number.isNaN(n)) return [n, n]; const m = /^(-?\d+(?:\.\d+)?)\s*[–—-]\s*(-?\d+(?:\.\d+)?)$/.exec(str(v)); return m ? [parseFloat(m[1]), parseFloat(m[2])].sort((a, b) => a - b) : null; };
   const fitFmt = (n, d = 1) => String(parseFloat(n.toFixed(d))).replace('-', '−');
   const fitSigned = (n) => (Math.abs(n) < 0.05 ? '0' : (n > 0 ? '+' : '') + fitFmt(n));
   function fitGap(cur, tgt) {
@@ -444,6 +444,42 @@
     const lo = t[0] - c[1], hi = t[1] - c[0];
     if (lo < -0.05 && hi > 0.05) return 'on target';
     return Math.abs(lo - hi) < 0.05 ? fitSigned(lo) : `${fitSigned(lo)} to ${fitSigned(hi)}`;
+  }
+  /* weekly physique log (optional fitness.physique.history): [{week, date, note, placement_changed:[ids], values:{<measurement id>: number|text|null}}].
+     Values are keyed by the measurement's stable id, so renaming / moving a measurement never breaks old weeks. Changes (latest vs first / previous entry) are computed
+     for plain numbers only; the V-taper ratio per week is COMPUTED from the shoulders and waist ids (never read from the data). */
+  const fitId = (v) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
+  const fitIdLabel = (id) => { const t = id.replace(/[_-]+/g, ' ').trim(); return t.charAt(0).toUpperCase() + t.slice(1); };
+  const fitDelta = (cur, base) => { if (!(Number.isFinite(cur) && Number.isFinite(base))) return ''; const d = cur - base; return Math.abs(d) < 0.005 ? '0' : (d > 0 ? '+' : '') + fitFmt(d, 2); };
+  function fitHistory(raw, rawRows) {
+    const seen = new Set(), es = [];
+    for (const x of Array.isArray(raw) ? raw : []) {
+      if (!isObj(x) || !(Number.isInteger(x.week) && x.week > 0) || !isObj(x.values) || !Object.keys(x.values).length || seen.has(x.week)) continue;
+      seen.add(x.week); es.push(x);
+    }
+    es.sort((a, b) => a.week - b.week);
+    if (!es.length) return null;
+    const meta = new Map(); for (const r of rawRows) { const id = fitId(r.id); if (id && !meta.has(id)) meta.set(id, { label: fitText(r.label), unit: fitText(r.unit) }); }
+    const ids = [...meta.keys()]; const first = ['weight', 'body_fat'].filter((k) => meta.has(k)); const order = [...first, ...ids.filter((k) => !first.includes(k))];
+    for (const e of es) for (const k of Object.keys(e.values)) { const id = fitId(k); if (id && !/ratio|vtaper/.test(id) && !order.includes(id)) order.push(id); }
+    const labelOf = (id) => (meta.has(id) && meta.get(id).label) || fitIdLabel(id);
+    const weeks = es.map((e) => { const mv = []; for (const k of Array.isArray(e.placement_changed) ? e.placement_changed : []) { const id = fitId(k); if (id && !mv.includes(id)) mv.push(id); }
+      return { week: e.week, date: dayOf(e.date) || '', note: fitText(e.note), moved: mv.map(labelOf), ids: mv }; });
+    const val = (e, id) => { const k = Object.keys(e.values).find((q) => fitId(q) === id); return k === undefined ? null : e.values[k]; };
+    const text = (v) => (typeof v === 'number' && Number.isFinite(v) ? fitFmt(v, 2) : typeof v === 'string' ? fitText(v) : '');
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' ? fitNum(v) : NaN);
+    const n = es.length, li = n - 1, pi = n - 2;
+    const cmp = n >= 2 ? { first: weeks[0].week, prev: weeks[pi].week, last: weeks[li].week } : null;
+    const moved = (id) => weeks.map((w) => w.ids.includes(id));
+    const rows = order.map((id) => {
+      const vs = es.map((e) => val(e, id)), cells = vs.map(text), nums = vs.map(num), mv = moved(id);
+      return { id, label: labelOf(id), unit: (meta.has(id) && meta.get(id).unit) || '', cells, moved: mv,
+        dFirst: cmp ? fitDelta(nums[li], nums[0]) : '', dPrev: cmp ? fitDelta(nums[li], nums[pi]) : '', dFirstMoved: cmp ? mv.slice(1).some(Boolean) : false, dPrevMoved: cmp ? mv[li] : false };
+    }).filter((r) => r.cells.some(Boolean));
+    if (!rows.length) return null;
+    const rs = es.map((e) => { const sh = num(val(e, 'shoulders')), wa = num(val(e, 'waist')); return sh > 0 && wa > 0 ? sh / wa : NaN; });
+    const ratio = rs.some((x) => x > 0) ? { cells: rs.map((x) => (x > 0 ? x.toFixed(2) : '')), dFirst: cmp ? fitDelta(rs[li], rs[0]) : '', dPrev: cmp ? fitDelta(rs[li], rs[pi]) : '' } : null;
+    return { weeks, rows, ratio, cmp, anyMoved: weeks.some((w) => w.moved.length > 0) };
   }
   const FIT_TG = [['weight_kg', 'Target weight', ' kg'], ['body_fat_pct', 'Target body fat', '%'], ['height_cm', 'Height', ' cm'], ['vtaper_ratio', 'V-taper ratio', '']];
   function fitPhysique(raw) {
@@ -458,8 +494,8 @@
     const cur = sh > 0 && wa > 0 ? sh / wa : NaN, ok2 = want > 0;
     const ratio = !(cur > 0) && !ok2 ? null : { cur: cur > 0 ? cur.toFixed(2) : '', target: ok2 ? fitFmt(want, 3) : '', gap: cur > 0 && ok2 ? Math.abs(want - cur).toFixed(2) : '', pct: cur > 0 && ok2 ? Math.max(0, Math.min(100, Math.round((cur / want) * 100))) : 0,
       needShoulders: cur > 0 && ok2 ? fitFmt(want * wa, 1) : '', unit: unitOf('shoulders') };
-    const p = { updated: dayOf(raw.updated) || '', targets, ratio, rows, emphasis: fitStrs(raw.emphasis), notes: fitStrs(raw.notes) };
-    return targets.length || ratio || rows.length || p.emphasis.length || p.notes.length ? p : null;
+    const p = { updated: dayOf(raw.updated) || '', targets, ratio, rows, emphasis: fitStrs(raw.emphasis), notes: fitStrs(raw.notes), history: fitHistory(raw.history, rawRows) };
+    return targets.length || ratio || rows.length || p.emphasis.length || p.notes.length || p.history ? p : null;
   }
   function fitnessModel(raw) {
     if (!isObj(raw)) return null;
@@ -518,7 +554,17 @@
         for (const k of ['measurements', 'emphasis', 'notes']) if (ph[k] != null && !Array.isArray(ph[k])) errors.push(`fitness.physique.${k} must be an array`);
         if (ph.targets != null && !isObj(ph.targets)) errors.push('fitness.physique.targets must be an object {weight_kg, body_fat_pct, height_cm, vtaper_ratio}');
         if (Array.isArray(ph.measurements)) ph.measurements.forEach((x, i) => { if (!isObj(x)) return errors.push(`fitness.physique.measurements[${i}] must be an object {label, unit, current, target}`);
-          for (const k of ['current', 'target']) if (x[k] != null && !['string', 'number'].includes(typeof x[k])) errors.push(`fitness.physique.measurements[${i}].${k} must be a number or text`); });
+          for (const k of ['current', 'target']) if (x[k] != null && !['string', 'number'].includes(typeof x[k])) errors.push(`fitness.physique.measurements[${i}].${k} must be a number or text`);
+          if (x.id != null && typeof x.id !== 'string') errors.push(`fitness.physique.measurements[${i}].id must be text (a stable id such as "biceps")`); });
+        if (ph.history != null && !Array.isArray(ph.history)) errors.push('fitness.physique.history must be an array of weekly entries {week, date, note, values}');
+        else if (Array.isArray(ph.history)) ph.history.forEach((x, i) => { const at = `fitness.physique.history[${i}]`;
+          if (!isObj(x)) return errors.push(`${at} must be an object {week, date, note, values}`);
+          if (!(typeof x.week === 'number' && Number.isInteger(x.week) && x.week > 0)) errors.push(`${at}.week must be a whole number (1, 2, 3 …)`);
+          if (x.date != null && !(typeof x.date === 'string' && isoOk(x.date))) errors.push(`${at}.date must be YYYY-MM-DD`);
+          if (x.note != null && typeof x.note !== 'string') errors.push(`${at}.note must be text`);
+          if (!isObj(x.values)) errors.push(`${at}.values must be an object keyed by measurement id, e.g. {"weight": 60}`);
+          else for (const [k, v] of Object.entries(x.values)) if (v != null && !['string', 'number'].includes(typeof v)) errors.push(`${at}.values.${k} must be a number, text or null`);
+          if (x.placement_changed != null && !(Array.isArray(x.placement_changed) && x.placement_changed.every((v) => typeof v === 'string'))) errors.push(`${at}.placement_changed must be an array of measurement ids`); });
       }
     }
     const strsOf = (k) => (Array.isArray(raw[k]) ? raw[k] : []);
@@ -544,7 +590,23 @@
       if (isObj(ph)) {
         (ph.measurements || []).forEach((x, i) => { scan(`physique.measurements[${i}].label`, x.label); scan(`physique.measurements[${i}].current`, x.current); scan(`physique.measurements[${i}].target`, x.target); });
         for (const k of ['emphasis', 'notes']) (ph[k] || []).forEach((x, i) => scan(`physique.${k}[${i}]`, x));
+        if (Array.isArray(ph.history) && ph.history.length) {
+          const mids = new Set(); (Array.isArray(ph.measurements) ? ph.measurements : []).forEach((x, i) => { if (!isObj(x)) return; const id = fitId(x.id);
+            if (!id) warnings.push(`fitness.physique.measurements[${i}] ("${str(x.label)}") has no "id" – it cannot appear in the weekly log (README → fitness item 8: add a stable id)`);
+            else if (mids.has(id)) warnings.push(`fitness.physique.measurements[${i}].id "${id}" is used twice`); else mids.add(id); });
+          const weeks = new Set();
+          ph.history.forEach((x, i) => { if (!isObj(x)) return; const at = `fitness.physique.history[${i}]`;
+            if (Number.isInteger(x.week)) { if (weeks.has(x.week)) warnings.push(`${at}.week ${x.week} is used twice – only the first entry is shown`); weeks.add(x.week); }
+            for (const k of ['ratio', 'vtaper_ratio', 'current_ratio']) if (x[k] != null) warnings.push(`${at}.${k} is ignored – never store the V-taper ratio (the site computes shoulders ÷ waist)`);
+            if (isObj(x.values)) for (const [k, v] of Object.entries(x.values)) { const id = fitId(k);
+              if (/ratio|vtaper/.test(id)) warnings.push(`${at}.values.${k} is a ratio – never store it (the site computes shoulders ÷ waist); it is not shown`);
+              else if (!mids.has(id)) warnings.push(`${at}.values.${k} is not a measurement id (add {"id": "${k}"} to physique.measurements[] or fix the id)`);
+              scan(`physique.history[${i}].values.${k}`, v); }
+            for (const k of Array.isArray(x.placement_changed) ? x.placement_changed : []) if (!mids.has(fitId(k))) warnings.push(`${at}.placement_changed "${str(k)}" is not a measurement id`);
+            scan(`physique.history[${i}].note`, x.note); });
+        }
         const pm = fitPhysique(ph);
+        if (pm && Array.isArray(ph.history) && ph.history.length && !pm.history) warnings.push('fitness.physique.history has no usable entries (each needs a whole "week" and a non-empty "values" object) – the Weekly log is not shown');
         if (!pm) warnings.push('fitness.physique has no usable content – the Physique goals section is not shown');
         else {
           if (!pm.ratio || !pm.ratio.cur) warnings.push('fitness.physique has no numeric shoulders and waist (measurements with id "shoulders" and "waist", current as a number) – the current V-taper ratio is not shown');

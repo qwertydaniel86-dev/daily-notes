@@ -692,4 +692,21 @@ tr.ft-now>*{background:rgba(42,167,101,.18)}
 .ft-phys .ft-unit{display:block}
 .ft-unit{font-weight:400;color:var(--muted);font-size:.72rem}
 .ft-gap{font-weight:600}
+/* weekly physique log: scrolls sideways inside its own wrapper, first column stays put (read-only table) */
+.ft-wklog{margin:.6rem 0 .3rem;min-width:0}
+.ft-wk-wrap{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;border-radius:12px;background:#fcfcfa}
+.ft-wk{width:max-content;min-width:100%;table-layout:auto;background:#fcfcfa;border-radius:0;overflow:visible}
+.ft-wk th,.ft-wk td{white-space:nowrap;padding:.35rem .5rem;hyphens:none;word-break:normal;overflow-wrap:normal;vertical-align:middle}
+.ft-wk td{text-align:center;font-size:.82rem;font-variant-numeric:tabular-nums}
+.ft-wk thead th{text-align:center;font-size:.68rem}
+.ft-wk thead th:first-child,.ft-wk tbody th{position:sticky;left:0;z-index:1;background:#fcfcfa;text-align:left;box-shadow:1px 0 0 var(--line)}
+.ft-wk thead th:first-child{width:auto;min-width:6.6rem}
+.ft-wk tbody th{font-size:.8rem;min-width:6.6rem}
+.ft-wk .ft-unit{display:block}
+.ft-wk-date{display:block;font-weight:400;text-transform:none;letter-spacing:0}
+.ft-wk-d{background:rgba(42,167,101,.07);font-weight:600}
+.ft-wk-ratio>*{border-top:2px solid var(--line)}
+.ft-mv{margin-left:.1rem;color:#b36b00;font-weight:700}
+.ft-wk-notes{margin-top:.3rem}
+.ft-wk-note{margin:.2rem 0}
 .ft-pnotes{margin-top:.4rem}

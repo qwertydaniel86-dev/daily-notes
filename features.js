@@ -501,6 +501,26 @@
     };
     const table = (cls, head, rows, hot) => h('div', { class: 'ft-tblwrap' }, h('table', { class: 'hl-tbl ft-tbl ' + cls }, h('thead', null, h('tr', null, head.map((c) => h('th', { scope: 'col' }, c)))),
       h('tbody', null, rows.map((r, i) => h('tr', { class: hot === i ? 'ft-now' : null, 'aria-current': hot === i ? 'date' : null }, r.map((c, j) => (j === 0 ? h('th', { scope: 'row' }, c) : h('td', null, c))))))));
+    // read-only weekly log (physique.history): rows = measures, columns = weeks; first column sticky, wrapper scrolls sideways on a phone. Display only – no controls.
+    const weeklyLog = (hs) => {
+      if (!hs) return null;
+      const dash = (v) => v || '—', cm = hs.cmp, one = cm && cm.first === cm.prev;
+      const dcols = !cm ? [] : one ? [['Δ since Wk ' + cm.first, 'dFirst', 'dFirstMoved']] : [['Δ since Wk ' + cm.first, 'dFirst', 'dFirstMoved'], ['Δ vs Wk ' + cm.prev, 'dPrev', 'dPrevMoved']];
+      const dag = (t, moved) => [dash(t), moved && t ? h('sup', { class: 'ft-mv', title: 'tape placement changed' }, '†') : null];
+      const dcell = (r, [, k, mk]) => h('td', { class: 'ft-wk-d' }, dag(r[k], r[mk]));
+      const head = [h('th', { scope: 'col' }, 'Measure'), ...dcols.map((c) => h('th', { scope: 'col', class: 'ft-wk-d' }, c[0])),
+        ...hs.weeks.map((w) => h('th', { scope: 'col' }, 'Week ' + w.week, w.date ? h('span', { class: 'ft-wk-date' }, fmtD(w.date, { weekday: undefined })) : null))];
+      const body = hs.rows.map((r) => h('tr', null, h('th', { scope: 'row' }, r.label, r.unit ? h('span', { class: 'ft-unit' }, ' ' + r.unit) : null), ...dcols.map((c) => dcell(r, c)),
+        ...r.cells.map((c, i) => h('td', null, dag(c, r.moved[i])))));
+      if (hs.ratio) body.push(h('tr', { class: 'ft-wk-ratio' }, h('th', { scope: 'row' }, 'V-taper ratio', h('span', { class: 'ft-unit' }, ' shoulders ÷ waist')),
+        ...dcols.map((c) => h('td', { class: 'ft-wk-d' }, dash(hs.ratio[c[1]]))), ...hs.ratio.cells.map((c) => h('td', null, dash(c)))));
+      const moved = hs.weeks.filter((w) => w.moved.length);
+      return h('div', { class: 'ft-wklog', id: 'ft-wklog' }, h('h4', { class: 'ft-h4' }, 'Weekly log'),
+        h('p', { class: 'small muted ft-note' }, cm ? `Week ${cm.last} compared with ${one ? 'Week ' + cm.first : 'Week ' + cm.first + ' and Week ' + cm.prev}. Swipe sideways for more weeks.` : 'First week logged – changes show from the second week.'),
+        h('div', { class: 'ft-wk-wrap' }, h('table', { class: 'hl-tbl ft-tbl ft-wk' }, h('thead', null, h('tr', null, head)), h('tbody', null, body))),
+        moved.length ? h('p', { class: 'small muted ft-note ft-wk-legend' }, '† tape placement changed – ' + moved.map((w) => `Week ${w.week}: ${w.moved.join(', ')}`).join('; ') + '. Compare those cells with care.') : null,
+        hs.weeks.some((w) => w.note) ? h('div', { class: 'ft-wk-notes' }, hs.weeks.filter((w) => w.note).map((w) => h('p', { class: 'small ft-note ft-wk-note' }, h('strong', null, 'Week ' + w.week + (w.date ? ' · ' + fmtD(w.date, { weekday: undefined }) : '') + ': '), w.note))) : null);
+    };
     const secs = [];
     // section 1: targets
     secs.push(h('section', { class: 'ft-sec', id: 'ft-targets', 'data-ft': 'targets' },
@@ -528,6 +548,7 @@
           rt.gap ? h('p', { class: 'small muted ft-ratio-gap' }, `Gap ${rt.gap}. Shoulders needed at the current waist: ${rt.needShoulders}${rt.unit ? ' ' + rt.unit : ''}.`) : null) : null,
         ph.rows.length ? h('div', { class: 'ft-tblwrap' }, h('table', { class: 'hl-tbl ft-tbl ft-phys' }, h('thead', null, h('tr', null, ['Measure', 'Now', 'Target', 'Gap'].map((c) => h('th', { scope: 'col' }, c)))),
           h('tbody', null, ph.rows.map((r) => h('tr', null, h('th', { scope: 'row' }, r.label, r.unit ? h('span', { class: 'ft-unit' }, ' ' + r.unit) : null), h('td', null, dash(r.current)), h('td', null, dash(r.target)), h('td', { class: 'ft-gap' }, dash(r.gap))))))) : null,
+        weeklyLog(ph.history),
         ph.emphasis.length ? h('div', { class: 'ft-alts' }, h('span', { class: 'ft-k' }, 'Training emphasis'), ul(ph.emphasis, 'ft-emph')) : null,
         ph.notes.length ? h('div', { class: 'ft-pnotes' }, ph.notes.map(note)) : null], true));
     }
